@@ -1,0 +1,20 @@
+---
+- name: Manage Cluster Resources
+  hosts: localhost                # Always run on the control node/localhost
+  gather_facts: false
+  vars:
+    kubeconfig_path: "ocpkubeconfig"
+    repo_root: "{{ playbook_dir }}"
+    ocp_token: "sha256~FfPu6HsNfWOA1fN81WGOjnoD-nfNTtgErR-S4G5755k"  #oc whoami --show-token
+    ansible_python_interpreter: "/usr/bin/python3"
+
+  tasks:
+    - name: Fetch list of pods
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_key: "{{ ocp_token }}"
+        verify_ssl: false
+        kind: Pod
+        namespace: default
+      register: pod_list
+
