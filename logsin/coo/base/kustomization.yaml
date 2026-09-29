@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - coo-operator.yaml
+  - logging-plugin.yaml
+  - coo-uiplugin-patcher.yaml
+  - coo-uiplugin-patcher-binding.yaml

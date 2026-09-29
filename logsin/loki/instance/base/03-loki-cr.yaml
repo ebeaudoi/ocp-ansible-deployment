@@ -1,0 +1,81 @@
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: logging-loki 
+  namespace: openshift-logging
+spec:
+  managementState: Managed
+  limits:
+    global:  
+      retention:  
+        days: 14
+  size: 1x.pico 
+  storage:
+    schemas:
+      - effectiveDate: '2026-06-15'
+        version: v13
+    secret:
+      name: logging-loki-s3 
+      type: s3 
+    tls:
+      caName: loki-s3-ca-bundle
+  storageClassName: nutanix-volume 
+  tenants:
+    mode: openshift-logging
+  template:
+    compactor:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+      - effect: NoSchedule
+        key: workload
+        value: loki
+    distributor:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+      - effect: NoSchedule
+        key: workload
+        value: loki
+    gateway:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+      - effect: NoSchedule
+        key: workload
+        value: loki
+    indexGateway:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+      - effect: NoSchedule
+        key: workload
+        value: loki
+    ingester:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+      - effect: NoSchedule
+        key: workload
+        value: loki
+    querier:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+      - effect: NoSchedule
+        key: workload
+        value: loki
+    queryFrontend:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+      - effect: NoSchedule
+        key: workload
+        value: loki
+    ruler:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+      - effect: NoSchedule
+        key: workload
+        value: loki

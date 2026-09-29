@@ -1,0 +1,9 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: coo-uiplugin-patcher
+rules:
+- apiGroups: ["observability.openshift.io"]
+  resources: ["uiplugins"]
+  resourceNames: ["logging"]
+  verbs: ["get", "list", "watch", "patch", "update"]

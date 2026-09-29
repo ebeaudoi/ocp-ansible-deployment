@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: logginginstance
+  namespace: openshift-gitops
+spec:
+  destination:
+    namespace: openshift-gitops
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: instance/base
+    repoURL: ssh://git@gitlab.devu.ca:2289/a-McLaughlin.J/logging.git
+    targetRevision: HEAD
