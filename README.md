@@ -91,14 +91,6 @@ Verify the import:
 
 ```bash
 python3 -c "import kubernetes; print(kubernetes.__version__)"
-```
-
-If Ansible still reports that it cannot import `kubernetes`, set the interpreter
-explicitly in the playbook (already present in `collectocpclusterdetails.yaml`):
-
-```yaml
-ansible_python_interpreter: "/usr/bin/python3"
-```
 
 ---
 

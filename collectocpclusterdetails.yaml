@@ -5,16 +5,104 @@
   vars:
     kubeconfig_path: "ocpkubeconfig"
     repo_root: "{{ playbook_dir }}"
-    ocp_token: "sha256~FfPu6HsNfWOA1fN81WGOjnoD-nfNTtgErR-S4G5755k"  #oc whoami --show-token
-    ansible_python_interpreter: "/usr/bin/python3"
+    gitopschannel: "gitops-1.21"
+#    ocp_token: "sha256~xczxoFdZi4SOi4lD_HEKnviAE2IGaiY5MAi4XixJlqs"  #oc whoami --show-token
+#    ansible_python_interpreter: "/usr/bin/python3"
 
   tasks:
     - name: Fetch list of pods
       kubernetes.core.k8s_info:
         kubeconfig: "{{ kubeconfig_path }}"
-        api_key: "{{ ocp_token }}"
+#        api_key: "{{ ocp_token }}"
         verify_ssl: false
         kind: Pod
-        namespace: default
+        namespace: openshift-marketplace
       register: pod_list
+    
+    # --- Item 2: OpenShift GitOps Operator ---
+    - name: Ensure GitOps operator namespace exists
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Namespace
+        name: openshift-gitops-operator
+        state: present
 
+    - name: Create GitOps OperatorGroup
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        definition:
+          apiVersion: operators.coreos.com/v1
+          kind: OperatorGroup
+          metadata:
+            name: openshift-gitops-operator-group
+            namespace: openshift-gitops-operator
+          spec:
+            upgradeStrategy: Default
+
+    - name: Create GitOps Subscription (Manual Approval)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: openshift-gitops-operator
+            namespace: openshift-gitops-operator
+          spec:
+            channel: "{{ gitopschannel }}"
+            name: openshift-gitops-operator
+            source: redhat-operators
+            sourceNamespace: openshift-marketplace
+            installPlanApproval: Manual
+
+    - name: Wait for GitOps InstallPlan to be generated
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: operators.coreos.com/v1alpha1
+        kind: InstallPlan
+        namespace: openshift-gitops-operator
+      register: gitops_install_plans
+      failed_when: false
+      until: (gitops_install_plans.resources | default([])) | length > 0
+      retries: 30
+      delay: 10
+
+    - name: Approve GitOps InstallPlan
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: InstallPlan
+          metadata:
+            name: "{{ item.metadata.name }}"
+            namespace: openshift-gitops-operator
+          spec:
+            approved: true
+      loop: "{{ gitops_install_plans.resources | default([]) }}"
+      when: not (item.spec.approved | default(false))
+
+    - name: Wait for ArgoCD CRD to be established
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: argocds.argoproj.io
+      register: argocd_crd
+      failed_when: false
+      until: (argocd_crd.resources | default([])) | length > 0
+      retries: 30
+      delay: 10
+
+    - name: Wait for default ArgoCD instance in openshift-gitops namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: argoproj.io/v1alpha1
+        kind: ArgoCD
+        namespace: openshift-gitops
+        name: openshift-gitops
+      register: argocd_instance
+      failed_when: false
+      until: (argocd_instance.resources | default([])) | length > 0
+      retries: 40
+      delay: 10
