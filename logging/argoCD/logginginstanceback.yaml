@@ -9,6 +9,6 @@ spec:
     server: https://kubernetes.default.svc
   project: default
   source:
-    path: instance/base
-    repoURL: git@github.com:ebeaudoi/ocp-ansible-deployment.git
+    path: logging/instance/base
+    repoURL: https://github.com/ebeaudoi/ocp-ansible-deployment.git
     targetRevision: HEAD

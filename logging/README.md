@@ -162,7 +162,7 @@ spec:
   channel: stable-6.3
   installPlanApproval: Automatic
   name: loki-operator
-  source: cs-redhat-catalog
+  source: redhat-operators
   sourceNamespace: openshift-marketplace
 ```
 
@@ -399,7 +399,7 @@ spec:
   channel: stable-6.3
   installPlanApproval: Automatic
   name: cluster-logging
-  source: cs-redhat-catalog
+  source: redhat-operators
   sourceNamespace: openshift-marketplace
 ```
 
@@ -595,7 +595,7 @@ spec:
   channel: stable
   installPlanApproval: Automatic
   name: cluster-observability-operator
-  source: cs-redhat-catalog
+  source: redhat-operators
   sourceNamespace: openshift-marketplace
 ```
 
