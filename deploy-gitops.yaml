@@ -113,4 +113,6 @@
         kubeconfig: "{{ kubeconfig_path }}"
         definition: "{{ lookup('kubernetes.core.kustomize', dir=repo_root + '/logging/operator/base/') }}"
         state: present
-    
+
+
+
