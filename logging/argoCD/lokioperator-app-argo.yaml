@@ -10,7 +10,7 @@ spec:
   project: default
   source:
     path: loki/base
-    repoURL: ssh://git@gitlab.devu.ca:2289/a-McLaughlin.J/logging.git
+    repoURL: git@github.com:ebeaudoi/ocp-ansible-deployment.git
     targetRevision: HEAD
   syncPolicy:
     automated:

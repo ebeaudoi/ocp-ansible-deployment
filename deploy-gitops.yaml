@@ -111,8 +111,7 @@
     - name: Deploy logging operator
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
-        definition: "{{ lookup('kubernetes.core.kustomize', dir=repo_root + '/logging/operator/base/') }}"
+        definition: "{{ lookup('kubernetes.core.kustomize', dir=repo_root + '/logging/argoCD/loggingoperator-app-argo.yaml') }}"
         state: present
-
 
 
