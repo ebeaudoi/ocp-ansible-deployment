@@ -9,6 +9,7 @@
 #    ocp_token: "sha256~xczxoFdZi4SOi4lD_HEKnviAE2IGaiY5MAi4XixJlqs"  #oc whoami --show-token
 #    ansible_python_interpreter: "/usr/bin/python3"
 
+
   tasks:
     - name: Fetch list of pods
       kubernetes.core.k8s_info:
