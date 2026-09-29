@@ -107,3 +107,10 @@
       until: (argocd_instance.resources | default([])) | length > 0
       retries: 40
       delay: 10
+
+    - name: Deploy logging operator
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        definition: "{{ lookup('kubernetes.core.kustomize', dir=repo_root + '/logging/operator/base/') }}"
+        state: present
+    
