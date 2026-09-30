@@ -5,7 +5,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 rules:
-- apiGroups: ["observability.openshift.io"]
-  resources: ["uiplugins"]
-  resourceNames: ["logging"]
-  verbs: ["get", "list", "watch", "patch", "update"]
+  # create cannot be restricted by resourceNames
+  - apiGroups: ["observability.openshift.io"]
+    resources: ["uiplugins"]
+    verbs: ["create", "delete", "get", "list", "watch", "patch", "update"]
