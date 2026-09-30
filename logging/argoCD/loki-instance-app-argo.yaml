@@ -13,7 +13,7 @@ spec:
     repoURL: https://github.com/ebeaudoi/ocp-ansible-deployment.git
     targetRevision: HEAD
   syncPolicy:
-    automated:
+    automated:
       enabled: true
-      prune: true
-      selfHeal: true
+      prune: true
+      selfHeal: true

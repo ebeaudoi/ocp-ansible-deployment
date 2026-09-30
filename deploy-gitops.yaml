@@ -120,7 +120,7 @@
         src: "{{ repo_root }}/logging/argoCD/lokioperator-app-argo.yaml"
         state: present
 
-  - name: Deploy loki instance
+    - name: Deploy loki instance
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         src: "{{ repo_root }}/logging/argoCD/loki-instance-app-argo.yaml"
