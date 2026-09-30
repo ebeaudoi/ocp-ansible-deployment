@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - operator-group.yaml
   - coo-operator.yaml
   - logging-plugin.yaml
   - coo-uiplugin-patcher.yaml
