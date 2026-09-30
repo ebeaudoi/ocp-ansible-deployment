@@ -241,9 +241,32 @@ Validate the overlay:
 oc kustomize logging/loki/instance/overlays/rhlab | oc apply --dry-run=client -f -
 ```
 
+5) Place the Loki instance on tainted infra nodes
+
+The LokiStack CR in `logging/loki/instance/base/03-loki-cr.yaml` schedules
+Loki components onto nodes that are both labeled as infra and tainted for
+Loki. Pods will stay `Pending` until matching nodes exist.
+
+Required node settings (must match the CR):
+
+- Label: `node-role.kubernetes.io/infra=`
+- Taint: `workload=loki:NoSchedule`
+
+```bash
+# Replace NODE with the worker/infra node name(s)
+NODE=<node-name>
+
+oc label node "$NODE" node-role.kubernetes.io/infra=
+oc adm taint node "$NODE" workload=loki:NoSchedule
+
+# Verify
+oc get nodes -l node-role.kubernetes.io/infra \
+  -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+```
+
 ---
 
-## 5. Run the playbook
+## 6. Run the playbook
 
 From the repository root:
 
