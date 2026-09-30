@@ -276,7 +276,6 @@ ansible-playbook collectocpclusterdetails.yaml
 
 The sample playbook queries pods in the `default` namespace via
 `kubernetes.core.k8s_info`.
-
 ---
 
 ## Troubleshooting
