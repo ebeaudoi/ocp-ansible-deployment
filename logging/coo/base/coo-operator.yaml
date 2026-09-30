@@ -3,10 +3,11 @@ kind: Subscription
 metadata:
   name: cluster-observability-operator
   namespace: openshift-cluster-observability-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   channel: stable
   installPlanApproval: Automatic
   name: cluster-observability-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace
-

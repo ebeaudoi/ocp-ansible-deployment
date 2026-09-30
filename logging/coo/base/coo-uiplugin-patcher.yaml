@@ -2,6 +2,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: coo-uiplugin-patcher
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 rules:
 - apiGroups: ["observability.openshift.io"]
   resources: ["uiplugins"]

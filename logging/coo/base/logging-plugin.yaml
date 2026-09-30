@@ -2,6 +2,10 @@ apiVersion: observability.openshift.io/v1alpha1
 kind: UIPlugin
 metadata:
   name: logging
+  annotations:
+    # Apply after COO installs the UIPlugin CRD
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   type: Logging
   logging:
