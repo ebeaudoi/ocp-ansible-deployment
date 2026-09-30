@@ -125,3 +125,9 @@
         kubeconfig: "{{ kubeconfig_path }}"
         src: "{{ repo_root }}/logging/argoCD/loki-instance-app-argo.yaml"
         state: present
+
+    - name: Deploy coo
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        src: "{{ repo_root }}/logging/argoCD/coo-app-argo.yaml"
+        state: present
