@@ -121,6 +121,13 @@ Update `collectocpclusterdetails.yaml` vars as needed:
 Do not commit real tokens or kubeconfig files to git.
 
 ---
+## Pre execute the playbook
+Before to run the playbook
+- Update the operator subscriptions
+  - catalogs name
+  - channel
+
+---
 
 ## 5. Run the playbook
 
