@@ -117,5 +117,5 @@
     - name: Deploy loki operator 
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
-        src: "{{ repo_root }}/logging/argoCD/loki-app-argo.yaml"
+        src: "{{ repo_root }}/logging/argoCD/lokioperator-app-argo.yaml"
         state: present
