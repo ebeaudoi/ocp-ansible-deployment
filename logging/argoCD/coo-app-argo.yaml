@@ -5,7 +5,7 @@ metadata:
   namespace: openshift-gitops
 spec:
   destination:
-    namespace: openshift-gitops
+    namespace: openshift-cluster-observability-operator
     server: https://kubernetes.default.svc
   project: default
   source:
@@ -13,8 +13,8 @@ spec:
     repoURL: https://github.com/ebeaudoi/ocp-ansible-deployment.git
     targetRevision: HEAD
   syncPolicy:
-  syncPolicy:
     automated:
-      enabled: true
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
