@@ -9,7 +9,7 @@ spec:
     server: https://kubernetes.default.svc
   project: default
   source:
-    path: /logging/loki/base
+    path: logging/loki/base
     repoURL: https://github.com/ebeaudoi/ocp-ansible-deployment.git
     targetRevision: HEAD
   syncPolicy:
