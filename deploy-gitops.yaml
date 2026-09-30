@@ -137,3 +137,4 @@
         kubeconfig: "{{ kubeconfig_path }}"
         src: "{{ repo_root }}/logging/argoCD/logginginstance-app-argo.yaml"
         state: present
+
