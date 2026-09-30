@@ -1,0 +1,16 @@
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: logging-loki
+  namespace: openshift-logging
+spec:
+  storage:
+    schemas:
+      - effectiveDate: "2026-06-15"
+        version: v13
+    secret:
+      name: logging-loki-s3
+      type: s3
+    tls:
+      caName: loki-s3-ca-bundle
+  storageClassName: thin

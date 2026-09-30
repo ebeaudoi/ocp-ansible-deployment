@@ -91,6 +91,7 @@ Verify the import:
 
 ```bash
 python3 -c "import kubernetes; print(kubernetes.__version__)"
+```
 
 ---
 
@@ -105,18 +106,11 @@ oc login --server=<api-url> --token=<token>
 oc config view --raw > ocpkubeconfig
 ```
 
-Optional: capture a current token for playbook vars:
-
-```bash
-oc whoami --show-token
-```
-
 Update `collectocpclusterdetails.yaml` vars as needed:
 
 | Variable           | Purpose                                      |
 |--------------------|----------------------------------------------|
 | `kubeconfig_path`  | Path to kubeconfig (default: `ocpkubeconfig`) |
-| `ocp_token`        | API token (`oc whoami --show-token`)          |
 
 Do not commit real tokens or kubeconfig files to git.
 
@@ -126,6 +120,126 @@ Before to run the playbook
 - Update the operator subscriptions
   - catalogs name
   - channel
+
+---
+Create a S3 storage using a simple solution provided by "guimou Guillaume Moutier"
+https://github.com/rh-aiservices-bu/s4
+
+1) Deploy the application
+```bash
+# Clone the repository
+git clone https://github.com/rh-aiservices-bu/s4.git
+cd s4
+
+#Update the password in the "kubernetes/s4-secret.yaml"
+  # UI Authentication (required - set your credentials)
+  UI_USERNAME: admin
+  UI_PASSWORD: redhat # CHANGE THIS before deploying!
+  AWS_SECRET_ACCESS_KEY: s4secret
+
+#Deploy the s4 solution
+# Create project
+oc new-project s4 --display-name="S4 Storage Service"
+
+# Set project labels
+oc label namespace s4 app=s4
+
+# Grant permissions (if needed)
+oc policy add-role-to-user edit <username> -n s4
+```
+2) create the bucket storage
+  - Using the UI, client the "create bucket" button
+    - Enter the bucket's name
+
+3) Encode and set Loki S3 Secret values
+
+Secret `logging-loki-s3` stores object-storage settings as **base64** under `data:`.
+
+- Base file: `logging/loki/instance/base/logging-loki-s3.yaml`
+- rhlab overlay patch: `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml`
+
+Required keys:
+
+| Key | Plaintext example | Purpose |
+|-----|-------------------|--------|
+| `access_key_id` | `s4admin` | S3 access key |
+| `access_key_secret` | `s4secret` | S3 secret key |
+| `bucketnames` | `loggingstack` | Bucket created in S4 UI |
+| `endpoint` | `https://s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com` | S3 API URL (no trailing space) |
+| `forcepathstyle` | `true` | Path-style addressing for S4/RGW |
+
+Encode each value with `printf` (avoids a trailing newline from `echo`):
+
+```bash
+# Generic form
+printf '%s' '<plaintext-value>' | base64 -w0; echo
+
+# Examples
+printf '%s' 's4admin' | base64 -w0; echo
+printf '%s' 's4secret' | base64 -w0; echo
+printf '%s' 'loggingstack' | base64 -w0; echo
+printf '%s' 'https://s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com' | base64 -w0; echo
+printf '%s' 'true' | base64 -w0; echo
+```
+
+Decode to verify:
+
+```bash
+printf '%s' '<base64-value>' | base64 -d; echo
+```
+
+Paste the base64 strings into `data:` in
+`logging/loki/instance/base/logging-loki-s3.yaml`, or into the `value:`
+fields of
+`logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml` when
+using the rhlab overlay.
+
+4) Update the Loki S3 TLS CA bundle (required for HTTPS S4 routes)
+
+LokiStack trusts object storage TLS via ConfigMap `loki-s3-ca-bundle`
+(`spec.storage.tls.caName`). The key name must be `service-ca.crt`.
+
+- Base file (default / non-rhlab): `logging/loki/instance/base/loki-s3-ca-bundle.yaml`
+- rhlab overlay patch (preferred for this lab): `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml`
+
+Get the CA that signs your S4 API route certificate (example host
+`s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com`):
+
+```bash
+# Dump the certificate chain presented by the S4 API route
+echo | openssl s_client -showcerts \
+  -servername s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com \
+  -connect s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com:443 \
+  2>/dev/null \
+| sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > /tmp/s4-chain.pem
+
+# Inspect subjects: cert 0 is usually the leaf; use the issuer/CA cert(s)
+csplit -f /tmp/s4-cert- -b '%02d.pem' /tmp/s4-chain.pem \
+  '/-----BEGIN CERTIFICATE-----/' '{*}' >/dev/null 2>&1 || true
+for f in /tmp/s4-cert-*.pem; do
+  [ -s "$f" ] || continue
+  echo "==== $f ===="
+  openssl x509 -in "$f" -noout -subject -issuer 2>/dev/null || true
+done
+```
+
+Alternate (default OpenShift ingress CA — only if the route uses the
+cluster router cert, not a custom cert):
+
+```bash
+oc get secret router-ca -n openshift-ingress-operator \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d
+```
+
+Paste the CA PEM into `data.service-ca.crt` in
+`logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml`
+(or into the base ConfigMap if you are not using the rhlab overlay).
+
+Validate the overlay:
+
+```bash
+oc kustomize logging/loki/instance/overlays/rhlab | oc apply --dry-run=client -f -
+```
 
 ---
 

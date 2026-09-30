@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - path: lokistack-cr-patch.yaml
+    target:
+      group: loki.grafana.com
+      version: v1
+      kind: LokiStack
+      name: logging-loki
+  - path: lokistack-storage-patch.yaml
+    target:
+      version: v1
+      kind: Secret
+      name: logging-loki-s3
+      namespace: openshift-logging
+  - path: loki-s3-ca-bundle-patch.yaml
+    target:
+      version: v1
+      kind: ConfigMap
+      name: loki-s3-ca-bundle
+      namespace: openshift-logging

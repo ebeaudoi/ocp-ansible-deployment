@@ -3,7 +3,7 @@ data:
   access_key_id: MldxaFoyQndUd25vUjJ5Zmk3b2c=
   access_key_secret: Y0FJaUZNVmFoczBmaXNubDdOY0s0UmVab05DMzVBQ3ZTSHlIWHhwRQ==
   bucketnames: bG9nZ2luZy1sb2tp
-  endpoint: aHR0cHM6Ly9haXN0b3ItYXBpLmFwcHMub3M0LmRldnUuY2E=
+  endpoint: aHR0cHM6Ly9zNC1hcGktczQuYXBwcy5vY3ByZDMuZWJlYXVkb2kudGFtbGFiLnJkdTIucmVkaGF0LmNvbQ==
   forcepathstyle: dHJ1ZQ==
 kind: Secret
 metadata:

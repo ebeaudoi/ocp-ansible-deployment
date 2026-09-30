@@ -1,0 +1,17 @@
+# Overrides logging/loki/instance/base/logging-loki-s3.yaml bucket/object-storage data.
+# Values must be base64-encoded. Replace placeholders with real rhlab values.
+- op: replace
+  path: /data/access_key_id
+  value: czRhZG1pbg==
+- op: replace
+  path: /data/access_key_secret
+  value: czRzZWNyZXQ=
+- op: replace
+  path: /data/bucketnames
+  value: bG9nZ2luZ3N0YWNr
+- op: replace
+  path: /data/endpoint
+  value: aHR0cHM6Ly9zNC1hcGktczQuYXBwcy5vY3ByZDMuZWJlYXVkb2kudGFtbGFiLnJkdTIucmVkaGF0LmNvbQ==
+- op: replace
+  path: /data/forcepathstyle
+  value: dHJ1ZQ==
