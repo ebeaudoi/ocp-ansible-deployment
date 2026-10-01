@@ -6,5 +6,5 @@ metadata:
   labels:
     kubernetes.io/metadata.name: openshift-cluster-observability-operator
     openshift.io/cluster-monitoring: "true"
-    argocd.argoproj.io/managed-by: openshift-gitops
+    argocd.argoproj.io/managed-by: logging-gitops
   name: openshift-cluster-observability-operator

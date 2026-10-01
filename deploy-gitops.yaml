@@ -108,6 +108,25 @@
       retries: 40
       delay: 10
 
+    - name: Deploy logging GitOps ArgoCD instance
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        src: "{{ repo_root }}/logging/argoCD/logging-gitops-argocd.yaml"
+        state: present
+
+    - name: Wait for logging ArgoCD instance in logging-gitops namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: argoproj.io/v1beta1
+        kind: ArgoCD
+        namespace: logging-gitops
+        name: logging-gitops
+      register: logging_argocd_instance
+      failed_when: false
+      until: (logging_argocd_instance.resources | default([])) | length > 0
+      retries: 40
+      delay: 10
+
     - name: Deploy logging operator
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"

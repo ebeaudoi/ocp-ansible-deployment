@@ -10,5 +10,5 @@ roleRef:
   name: coo-uiplugin-patcher
 subjects:
 - kind: ServiceAccount
-  name: openshift-gitops-argocd-application-controller
-  namespace: openshift-gitops
+  name: logging-gitops-argocd-application-controller
+  namespace: logging-gitops

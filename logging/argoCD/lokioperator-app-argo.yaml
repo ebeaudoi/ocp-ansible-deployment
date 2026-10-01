@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: lokioperator
-  namespace: openshift-gitops
+  namespace: logging-gitops
 spec:
   destination:
     namespace: openshift-gitops
