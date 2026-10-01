@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+# =============================================================================
+# configure-logging-patches.sh
+#
+# Edit the parameters in the HEADER section, then run:
+#   ./configure-logging-patches.sh
+#
+# The script rewrites the kustomize overlay patch files used by the logging
+# (and optional S4) deployment.
+# =============================================================================
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${SCRIPT_DIR}"
+
+# =============================================================================
+# HEADER — edit these values for your lab / cluster
+# =============================================================================
+
+# --- S4 flags ---
+# Set S4_ENABLED=true when Loki uses the in-repo S4 S3 backend.
+S4_ENABLED=true
+# Set S4_DEPLOYED_ON_CLUSTER=true only after S4 is running on the cluster
+# (Route reachable). When true, the script fetches the TLS CA from the S4
+# API route and updates loki-s3-ca-bundle-patch.yaml.
+S4_DEPLOYED_ON_CLUSTER=true
+
+# --- S4 overlay parameters (s4/overlays/lab) ---
+S4_API_HOST="s3.s4.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"
+S4_AWS_ACCESS_KEY_ID="s4admin"
+S4_AWS_SECRET_ACCESS_KEY="s4secret"
+S4_UI_USERNAME="admin"
+S4_UI_PASSWORD="changeme"
+
+# --- Loki S3 / object-storage parameters
+# (logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml) ---
+# When S4_ENABLED=true these default from the S4_* values above unless you
+# override them here (leave empty to inherit).
+LOKI_S3_ACCESS_KEY_ID="s4admin"
+LOKI_S3_ACCESS_KEY_SECRET="s4secret"
+LOKI_S3_BUCKET="loggingstack"
+LOKI_S3_ENDPOINT="https://s3.s4.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"          # empty + S4_ENABLED => https://${S4_API_HOST}
+LOKI_S3_FORCE_PATH_STYLE="true"
+
+# --- LokiStack CR parameters
+# (logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml) ---
+LOKI_STORAGE_CLASS="thin-csi"
+LOKI_SCHEMA_EFFECTIVE_DATE="2026-06-15"
+LOKI_SCHEMA_VERSION="v13"
+
+# --- Optional kubeconfig (only needed if resolving Route via oc) ---
+KUBECONFIG_PATH="${REPO_ROOT}/ocpkubeconfig"
+S4_NAMESPACE="s4"
+S4_API_ROUTE_NAME="s3.s4.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"
+
+# =============================================================================
+# Paths (normally leave as-is)
+# =============================================================================
+
+S4_ROUTE_PATCH="${REPO_ROOT}/s4/overlays/lab/s4-route-s3-patch.yaml"
+S4_SECRET_PATCH="${REPO_ROOT}/s4/overlays/lab/s4-secret-patch.yaml"
+LOKI_STORAGE_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml"
+LOKI_CR_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml"
+LOKI_CA_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml"
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+b64() {
+  printf '%s' "$1" | base64 -w0 2>/dev/null || printf '%s' "$1" | base64
+}
+
+indent_pem() {
+  # Indent PEM lines with 4 spaces for YAML block scalar under service-ca.crt: |
+  sed 's/^/    /'
+}
+
+resolve_loki_s3_params() {
+  if [[ "${S4_ENABLED}" == "true" ]]; then
+    LOKI_S3_ACCESS_KEY_ID="${LOKI_S3_ACCESS_KEY_ID:-${S4_AWS_ACCESS_KEY_ID}}"
+    LOKI_S3_ACCESS_KEY_SECRET="${LOKI_S3_ACCESS_KEY_SECRET:-${S4_AWS_SECRET_ACCESS_KEY}}"
+    LOKI_S3_ENDPOINT="${LOKI_S3_ENDPOINT:-https://${S4_API_HOST}}"
+  else
+    : "${LOKI_S3_ACCESS_KEY_ID:?LOKI_S3_ACCESS_KEY_ID is required when S4_ENABLED=false}"
+    : "${LOKI_S3_ACCESS_KEY_SECRET:?LOKI_S3_ACCESS_KEY_SECRET is required when S4_ENABLED=false}"
+    : "${LOKI_S3_ENDPOINT:?LOKI_S3_ENDPOINT is required when S4_ENABLED=false}"
+  fi
+  : "${LOKI_S3_BUCKET:?LOKI_S3_BUCKET is required}"
+}
+
+write_s4_route_patch() {
+  cat > "${S4_ROUTE_PATCH}" <<EOF
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: s4-api
+spec:
+  host: ${S4_API_HOST}
+EOF
+  echo "Updated ${S4_ROUTE_PATCH}"
+}
+
+write_s4_secret_patch() {
+  cat > "${S4_SECRET_PATCH}" <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s4-credentials
+stringData:
+  AWS_ACCESS_KEY_ID: ${S4_AWS_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${S4_AWS_SECRET_ACCESS_KEY}
+  UI_USERNAME: ${S4_UI_USERNAME}
+  UI_PASSWORD: ${S4_UI_PASSWORD}
+EOF
+  echo "Updated ${S4_SECRET_PATCH}"
+}
+
+write_loki_storage_patch() {
+  local access_key_b64 secret_b64 bucket_b64 endpoint_b64 force_b64
+  access_key_b64="$(b64 "${LOKI_S3_ACCESS_KEY_ID}")"
+  secret_b64="$(b64 "${LOKI_S3_ACCESS_KEY_SECRET}")"
+  bucket_b64="$(b64 "${LOKI_S3_BUCKET}")"
+  endpoint_b64="$(b64 "${LOKI_S3_ENDPOINT}")"
+  force_b64="$(b64 "${LOKI_S3_FORCE_PATH_STYLE}")"
+
+  cat > "${LOKI_STORAGE_PATCH}" <<EOF
+# Overrides logging/loki/instance/base/logging-loki-s3.yaml bucket/object-storage data.
+# Values must be base64-encoded. Generated by configure-logging-patches.sh.
+- op: replace
+  path: /data/access_key_id
+  value: ${access_key_b64}
+- op: replace
+  path: /data/access_key_secret
+  value: ${secret_b64}
+- op: replace
+  path: /data/bucketnames
+  value: ${bucket_b64}
+- op: replace
+  path: /data/endpoint
+  value: ${endpoint_b64}
+- op: replace
+  path: /data/forcepathstyle
+  value: ${force_b64}
+EOF
+  echo "Updated ${LOKI_STORAGE_PATCH}"
+}
+
+write_loki_cr_patch() {
+  cat > "${LOKI_CR_PATCH}" <<EOF
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: logging-loki
+  namespace: openshift-logging
+spec:
+  storage:
+    schemas:
+      - effectiveDate: "${LOKI_SCHEMA_EFFECTIVE_DATE}"
+        version: ${LOKI_SCHEMA_VERSION}
+    secret:
+      name: logging-loki-s3
+      type: s3
+    tls:
+      caName: loki-s3-ca-bundle
+  storageClassName: ${LOKI_STORAGE_CLASS}
+EOF
+  echo "Updated ${LOKI_CR_PATCH}"
+}
+
+fetch_s4_ca_pem() {
+  local host="$1"
+  local chain tmp_dir leaf issuer
+
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "ERROR: openssl is required to fetch the S4 TLS CA" >&2
+    exit 1
+  fi
+
+  echo "Fetching TLS certificate chain from ${host}:443 ..." >&2
+  chain="$(
+    echo | openssl s_client -showcerts -servername "${host}" -connect "${host}:443" 2>/dev/null \
+      | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p'
+  )"
+
+  if [[ -z "${chain}" ]]; then
+    echo "ERROR: could not retrieve certificates from ${host}:443" >&2
+    echo "       Ensure S4 is deployed and S4_API_HOST is correct." >&2
+    exit 1
+  fi
+
+  tmp_dir="$(mktemp -d)"
+  # Split chain into cert-0.pem, cert-1.pem, ...
+  awk -v out="${tmp_dir}" '
+    /BEGIN CERTIFICATE/ { n++; f=sprintf("%s/cert-%d.pem", out, n-1); }
+    { print > f }
+  ' <<<"${chain}"
+
+  leaf="${tmp_dir}/cert-0.pem"
+  issuer="${tmp_dir}/cert-1.pem"
+
+  # Prefer issuer/CA (not only the leaf), matching README guidance.
+  if [[ -f "${issuer}" ]]; then
+    cat "${issuer}"
+  else
+    echo "WARNING: only one certificate returned; using leaf cert as CA bundle" >&2
+    cat "${leaf}"
+  fi
+
+  rm -rf "${tmp_dir}"
+}
+
+maybe_resolve_s4_host_from_cluster() {
+  # If oc + kubeconfig are available, prefer the live Route host.
+  if [[ ! -f "${KUBECONFIG_PATH}" ]] || ! command -v oc >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local live_host
+  live_host="$(
+    oc --kubeconfig "${KUBECONFIG_PATH}" get route "${S4_API_ROUTE_NAME}" \
+      -n "${S4_NAMESPACE}" \
+      -o jsonpath='{.spec.host}' 2>/dev/null || true
+  )"
+
+  if [[ -n "${live_host}" ]]; then
+    echo "Resolved live S4 API Route host: ${live_host}"
+    S4_API_HOST="${live_host}"
+    if [[ "${S4_ENABLED}" == "true" && -z "${LOKI_S3_ENDPOINT}" ]]; then
+      LOKI_S3_ENDPOINT="https://${S4_API_HOST}"
+    fi
+  fi
+}
+
+write_loki_ca_bundle_patch() {
+  local ca_pem indented
+
+  ca_pem="$(fetch_s4_ca_pem "${S4_API_HOST}")"
+  indented="$(indent_pem <<<"${ca_pem}")"
+
+  cat > "${LOKI_CA_PATCH}" <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-s3-ca-bundle
+  namespace: openshift-logging
+data:
+  # CA that signs the S4 API route certificate.
+  # Generated by configure-logging-patches.sh from ${S4_API_HOST}.
+  service-ca.crt: |
+${indented}
+EOF
+  echo "Updated ${LOKI_CA_PATCH}"
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+main() {
+  echo "Configuring logging overlay patches from header parameters..."
+  echo "  S4_ENABLED=${S4_ENABLED}"
+  echo "  S4_DEPLOYED_ON_CLUSTER=${S4_DEPLOYED_ON_CLUSTER}"
+
+  if [[ "${S4_ENABLED}" == "true" && "${S4_DEPLOYED_ON_CLUSTER}" == "true" ]]; then
+    maybe_resolve_s4_host_from_cluster
+  fi
+
+  resolve_loki_s3_params
+
+  if [[ "${S4_ENABLED}" == "true" ]]; then
+    write_s4_route_patch
+    write_s4_secret_patch
+  else
+    echo "S4_ENABLED=false — skipping s4/overlays/lab patches"
+  fi
+
+  write_loki_storage_patch
+  write_loki_cr_patch
+
+  if [[ "${S4_ENABLED}" == "true" && "${S4_DEPLOYED_ON_CLUSTER}" == "true" ]]; then
+    write_loki_ca_bundle_patch
+  else
+    echo "Skipping Loki TLS CA update (set S4_ENABLED=true and S4_DEPLOYED_ON_CLUSTER=true after S4 is up)"
+  fi
+
+  echo
+  echo "Done. Review git diff, then commit/push so Argo CD can sync."
+  if [[ "${S4_ENABLED}" == "true" ]]; then
+    echo "  Deploy/refresh S4 with: ansible-playbook deploy-s4.yaml"
+  fi
+}
+
+main "$@"

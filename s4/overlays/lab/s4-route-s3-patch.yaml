@@ -1,0 +1,6 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: s4-api
+spec:
+  host: s3.s4.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com

@@ -1,0 +1,24 @@
+# Optional: S3 API Route for OpenShift
+# WARNING: This exposes the S3 API outside the cluster.
+# Only apply this if you need external S3 API access.
+# Ensure proper authentication and network policies are in place.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: s4-api
+  labels:
+    app: s4
+    app.kubernetes.io/name: s4
+    app.kubernetes.io/component: storage
+spec:
+  # host: s3.s4.apps.example.com  # Uncomment and set for custom hostname
+  port:
+    targetPort: s3-api
+  to:
+    kind: Service
+    name: s4
+    weight: 100
+  wildcardPolicy: None
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

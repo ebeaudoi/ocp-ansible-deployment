@@ -1,0 +1,20 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: s4
+  labels:
+    app: s4
+    app.kubernetes.io/name: s4
+    app.kubernetes.io/component: storage
+spec:
+  # host: s4.apps.example.com  # Uncomment and set for custom hostname
+  port:
+    targetPort: web-ui
+  to:
+    kind: Service
+    name: s4
+    weight: 100
+  wildcardPolicy: None
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

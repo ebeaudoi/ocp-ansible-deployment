@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s4
+  labels:
+    app: s4
+    app.kubernetes.io/name: s4
+    app.kubernetes.io/component: storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: s4
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: s4
+        app.kubernetes.io/name: s4
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: s4
+          image: quay.io/rh-aiservices-bu/s4:latest
+          imagePullPolicy: Always
+          ports:
+            - name: s3-api
+              containerPort: 7480
+              protocol: TCP
+            - name: web-ui
+              containerPort: 5000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: s4-config
+            - secretRef:
+                name: s4-credentials
+          volumeMounts:
+            - name: s4-data
+              mountPath: /var/lib/ceph/radosgw
+            # Uncomment to enable local file browser (also uncomment volume and PVC)
+            # - name: s4-local-storage
+            #   mountPath: /opt/app-root/src/data
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '250m'
+            limits:
+              memory: '2Gi'
+              cpu: '2000m'
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: s4-data
+          persistentVolumeClaim:
+            claimName: s4-data
+        # Uncomment to enable local file browser (also uncomment volumeMount and PVC)
+        # - name: s4-local-storage
+        #   persistentVolumeClaim:
+        #     claimName: s4-local-storage

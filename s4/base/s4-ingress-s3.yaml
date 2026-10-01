@@ -1,0 +1,29 @@
+# Optional: S3 API Ingress for Kubernetes
+# WARNING: This exposes the S3 API outside the cluster.
+# Only apply this if you need external S3 API access.
+# Ensure proper authentication and network policies are in place.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: s4-api
+  labels:
+    app: s4
+    app.kubernetes.io/name: s4
+    app.kubernetes.io/component: storage
+spec:
+  rules:
+    - host: s3.s4.example.com # Change to your actual hostname
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: s4
+                port:
+                  number: 7480
+  # Uncomment and configure TLS if needed
+  # tls:
+  #   - secretName: s4-api-tls
+  #     hosts:
+  #       - s3.s4.example.com

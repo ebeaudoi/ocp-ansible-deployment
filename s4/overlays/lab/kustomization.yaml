@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - path: s4-route-s3-patch.yaml
+    target:
+      group: route.openshift.io
+      version: v1
+      kind: Route
+      name: s4-api
+  - path: s4-secret-patch.yaml
+    target:
+      version: v1
+      kind: Secret
+      name: s4-credentials

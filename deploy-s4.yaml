@@ -1,0 +1,140 @@
+---
+- name: Deploy S4
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubeconfig_path: "ocpkubeconfig"
+    repo_root: "{{ playbook_dir }}"
+    s4_namespace: s4
+    s4_bucket_name: loggingstack
+
+  tasks:
+    - name: Ensure s4 namespace exists
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ s4_namespace }}"
+        state: present
+
+    - name: Render s4 lab overlay
+      ansible.builtin.command:
+        cmd: oc kustomize "{{ repo_root }}/s4/overlays/lab"
+      register: s4_manifests
+      changed_when: false
+
+    - name: Deploy s4 from lab overlay
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        namespace: "{{ s4_namespace }}"
+        definition: "{{ s4_manifests.stdout | from_yaml_all | list }}"
+        state: present
+
+    - name: Restart s4 Deployment to pick up credential changes
+      ansible.builtin.command:
+        cmd: >-
+          oc rollout restart deployment/s4
+          -n {{ s4_namespace }}
+          --kubeconfig {{ kubeconfig_path }}
+
+    - name: Wait for s4 rollout to complete
+      ansible.builtin.command:
+        cmd: >-
+          oc rollout status deployment/s4
+          -n {{ s4_namespace }}
+          --kubeconfig {{ kubeconfig_path }}
+          --timeout=600s
+      changed_when: false
+
+    - name: Get s4 credentials from Secret
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Secret
+        name: s4-credentials
+        namespace: "{{ s4_namespace }}"
+      register: s4_credentials_secret
+
+    - name: Set s4 UI credentials from Secret
+      ansible.builtin.set_fact:
+        s4_ui_username: "{{ s4_credentials_secret.resources[0].data.UI_USERNAME | b64decode }}"
+        s4_ui_password: "{{ s4_credentials_secret.resources[0].data.UI_PASSWORD | b64decode }}"
+      no_log: true
+
+    - name: Get s4 UI Route
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: s4
+        namespace: "{{ s4_namespace }}"
+      register: s4_ui_route
+      until: >
+        (s4_ui_route.resources | default([]) | length > 0) and
+        (s4_ui_route.resources[0].spec.host | default('') | length > 0)
+      retries: 30
+      delay: 5
+
+    - name: Set s4 API base URL
+      ansible.builtin.set_fact:
+        s4_api_base: "https://{{ s4_ui_route.resources[0].spec.host }}/api"
+
+    - name: Wait for s4 API to become ready
+      ansible.builtin.uri:
+        url: "{{ s4_api_base }}/auth/info"
+        method: GET
+        validate_certs: false
+        status_code: 200
+      register: s4_auth_info
+      until: s4_auth_info.status == 200
+      retries: 30
+      delay: 10
+
+    - name: Login to s4 API
+      ansible.builtin.uri:
+        url: "{{ s4_api_base }}/auth/login"
+        method: POST
+        validate_certs: false
+        headers:
+          Content-Type: application/json
+        body_format: json
+        body:
+          username: "{{ s4_ui_username }}"
+          password: "{{ s4_ui_password }}"
+        status_code: 200
+      register: s4_login
+      no_log: true
+      when: s4_auth_info.json.authRequired | default(false)
+
+    - name: Create s4 bucket {{ s4_bucket_name }}
+      ansible.builtin.uri:
+        url: "{{ s4_api_base }}/buckets"
+        method: POST
+        validate_certs: false
+        headers: "{{ s4_bucket_headers }}"
+        body_format: json
+        body:
+          bucketName: "{{ s4_bucket_name }}"
+        status_code:
+          - 200
+          - 409
+      vars:
+        s4_bucket_headers: >-
+          {{
+            {'Content-Type': 'application/json'}
+            | combine(
+                {'Authorization': 'Bearer ' ~ s4_login.json.token}
+                if (s4_auth_info.json.authRequired | default(false))
+                else {}
+              )
+          }}
+      register: s4_bucket_create
+
+    - name: Report bucket create result
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'Bucket ' ~ s4_bucket_name ~ ' already exists'
+            if s4_bucket_create.status == 409
+            else 'Bucket ' ~ s4_bucket_name ~ ' created successfully'
+          }}

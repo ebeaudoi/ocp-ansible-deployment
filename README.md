@@ -1,19 +1,38 @@
 # OpenShift Logging Stack with Ansible + GitOps
 
-Deploy OpenShift GitOps (Argo CD), then use Argo CD Applications to install:
+Deploy OpenShift GitOps (Argo CD), a dedicated logging Argo CD instance, then use Argo CD Applications to install:
 
 - Logging operator
 - Loki operator + LokiStack instance
 - Cluster Observability Operator (COO) + Logging UIPlugin
 - ClusterLogForwarder (logging instance)
 
+A separate playbook deploys [S4](https://github.com/rh-aiservices-bu/s4) (S3-compatible object storage) and creates the Loki bucket.
+
 Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` collection.
+
+---
+
+## Architecture overview
+
+```text
+deploy-gitops.yaml
+  ├── OpenShift GitOps operator
+  ├── default Argo CD (openshift-gitops)
+  └── logging-gitops Argo CD instance
+        └── logging Applications (operator, Loki, COO, CLF)
+
+deploy-s4.yaml
+  └── S4 (s4/overlays/lab) + loggingstack bucket
+```
+
+Logging Applications live in the **`logging-gitops`** namespace (not the default `openshift-gitops` instance). Target namespaces are labeled `argocd.argoproj.io/managed-by: logging-gitops` so the secondary Argo CD instance can manage them.
 
 ---
 
 ## What `deploy-gitops.yaml` does
 
-`deploy-gitops.yaml` is the main playbook. It runs on `localhost` and uses kubeconfig `ocpkubeconfig`.
+`deploy-gitops.yaml` is the main GitOps playbook. It runs on `localhost` and uses kubeconfig `ocpkubeconfig`.
 
 ### Phase 1 — Install OpenShift GitOps
 
@@ -23,10 +42,15 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
 4. Waits for and approves the InstallPlan
 5. Waits for the Argo CD CRD and the default `openshift-gitops` ArgoCD instance
 
-### Phase 2 — Create Argo CD Applications
+### Phase 2 — Create the logging Argo CD instance
 
-After GitOps is ready, the playbook applies Application manifests from `logging/argoCD/`.  
-Argo CD then syncs each app from this Git repo:
+1. Applies `logging/argoCD/logging-gitops-argocd.yaml` (Namespace + ArgoCD CR `logging-gitops`)
+2. Waits for `ArgoCD/logging-gitops` in namespace `logging-gitops`
+
+### Phase 3 — Create logging Argo CD Applications
+
+After the logging GitOps instance is ready, the playbook applies Application manifests from `logging/argoCD/`.  
+Those Applications are created in **`logging-gitops`**. Argo CD then syncs each app from this Git repo:
 
 | Ansible task | Application file | What Argo CD deploys |
 |--------------|------------------|----------------------|
@@ -56,7 +80,7 @@ ansible-playbook deploy-gitops.yaml
 
 ## Prerequisites
 
-Do these on the bastion **before** running the playbook.
+Do these on the bastion **before** running the playbooks.
 
 ### 1. Install Ansible
 
@@ -109,12 +133,14 @@ python3 -m pip install --user kubernetes
 python3 -c "import kubernetes; print(kubernetes.__version__)"
 ```
 
-### 4. Cluster kubeconfig
+### 4. Cluster kubeconfig and `oc`
 
 ```bash
 oc login --server=<api-url> --token=<token>
 oc config view --raw > ocpkubeconfig
 ```
+
+`deploy-s4.yaml` uses `oc kustomize` / `oc rollout` (this environment may not have `kubectl` or a standalone `kustomize` binary).
 
 Do not commit tokens or kubeconfig files.
 
@@ -135,24 +161,53 @@ oc get catalogsource -n openshift-marketplace
 
 ## Object storage (S4) for Loki
 
-Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiservices-bu/s4).
+Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiservices-bu/s4), packaged in-repo under `s4/` with Kustomize.
 
-### Deploy S4
+### Layout
+
+| Path | Purpose |
+|------|---------|
+| `s4/base/` | Base manifests (Deployment, Service, Routes, Secret, PVC, ConfigMap) + `kustomization.yaml` |
+| `s4/overlays/lab/` | Lab patches for S3 route host and credentials |
+| `deploy-s4.yaml` | Ansible playbook to deploy S4 and create the Loki bucket |
+
+### Lab overlay patches
+
+Before deploying, set lab-specific values either by editing the patch files directly, or with the helper script:
 
 ```bash
-git clone https://github.com/rh-aiservices-bu/s4.git
-cd s4
+# 1. Edit HEADER parameters in configure-logging-patches.sh
+#    - S4_ENABLED / S4_DEPLOYED_ON_CLUSTER
+#    - S4 host, credentials, Loki bucket/endpoint/storageClass
+# 2. Run:
+./configure-logging-patches.sh
 ```
 
-Update credentials in `kubernetes/s4-secret.yaml`, then:
+When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script also refreshes `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
+
+Manual patch files:
+
+- `s4/overlays/lab/s4-route-s3-patch.yaml` — `spec.host` for the S3 API Route (`s4-api`)
+- `s4/overlays/lab/s4-secret-patch.yaml` — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `UI_USERNAME`, `UI_PASSWORD`
+- `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml` — base64 S3 secret fields
+- `logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml` — `storageClassName` / schema
+
+### Deploy S4 and create the `loggingstack` bucket
+
+`deploy-s4.yaml`:
+
+1. Creates namespace `s4`
+2. Renders `s4/overlays/lab` with `oc kustomize` and applies it
+3. Restarts the `s4` Deployment so pods pick up Secret changes
+4. Waits for rollout and the UI Route / API
+5. Reads UI credentials from Secret `s4-credentials`
+6. Logs into the [S4 REST API](https://github.com/rh-aiservices-bu/s4/tree/main/docs/api) and creates bucket **`loggingstack`** (HTTP 409 = already exists)
 
 ```bash
-oc new-project s4 --display-name="S4 Storage Service"
-oc label namespace s4 app=s4
-# follow the S4 OpenShift/Helm install steps from that repo
+ansible-playbook deploy-s4.yaml
 ```
 
-Create a bucket in the S4 UI (example name: `loggingstack`).
+Run this **before** (or while) Loki is syncing so the bucket and S3 endpoint exist.
 
 ### Encode Loki S3 Secret values
 
@@ -166,7 +221,7 @@ Files:
 | `access_key_id` | `s4admin` |
 | `access_key_secret` | `s4secret` |
 | `bucketnames` | `loggingstack` |
-| `endpoint` | `https://s4-api-s4.apps.<cluster-domain>` (no trailing space) |
+| `endpoint` | `https://s4-api-s4.apps.<cluster-domain>` or your custom S3 route host (no trailing space) |
 | `forcepathstyle` | `true` |
 
 ```bash
@@ -223,17 +278,26 @@ oc get nodes -l node-role.kubernetes.io/infra \
 
 ## Run the deployment
 
-1. Commit and push Git changes Argo CD should sync (secrets, CA, overlays, apps).
-2. From the repo root:
+1. Update S4 lab patches (route host, credentials) and Loki S3/CA overlays for your cluster.
+2. Commit and push Git changes Argo CD should sync (secrets, CA, overlays, apps).
+3. Deploy S4 and create the bucket:
+
+```bash
+ansible-playbook deploy-s4.yaml
+```
+
+4. Deploy GitOps + logging Applications:
 
 ```bash
 ansible-playbook deploy-gitops.yaml
 ```
 
-3. Watch Applications:
+5. Watch Applications and workloads:
 
 ```bash
-oc get applications -n openshift-gitops
+oc get argocd -n logging-gitops
+oc get applications -n logging-gitops
+oc get pods -n s4
 oc get pods -n openshift-logging
 oc get lokistack logging-loki -n openshift-logging
 ```
@@ -246,9 +310,12 @@ oc get lokistack logging-loki -n openshift-logging
 |---------|--------------|------------|
 | `Failed to import ... kubernetes` | Missing pip package | `python3 -m pip install --user kubernetes` |
 | `Unable to find a match: python3-kubernetes` | No RPM on RHEL 10 | Use pip, not dnf |
+| `Failed to find required executable 'kubectl' and 'kustomize'` | Old playbook used kustomize lookup | Use current `deploy-s4.yaml` (`oc kustomize`) |
+| S4 login `401 Unauthorized` | Pod still on old Secret / wrong UI creds | Re-run `deploy-s4.yaml` (rollout restart + creds from Secret) |
 | Argo `unknown field "Â ... automated"` | Non-breaking spaces in YAML | Replace NBSPs with normal spaces |
 | `invalid document separator: -----BEGIN CERTIFICATE-----` | PEM not indented under `\|` | Indent CA lines in the ConfigMap |
 | `pod has unbound immediate PersistentVolumeClaims` | Wrong/missing StorageClass | Set `storageClassName` to an existing SC (e.g. `thin-csi`) |
 | `CatalogSourcesUnhealthy` | Bad catalog name or unhealthy CS | `oc get catalogsource -n openshift-marketplace` and fix Subscription `source` |
 | `UIPlugin` CRD / resource not found | COO not ready or Argo RBAC | Wait for COO CSV/CRD; ensure UIPlugin create RBAC exists |
 | Loki pods Pending on scheduling | Missing infra label/taint | Label + taint nodes as above |
+| Logging apps missing in default Argo UI | Apps are on secondary instance | Check `oc get applications -n logging-gitops` |
