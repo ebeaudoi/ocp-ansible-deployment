@@ -1,59 +1,94 @@
-# Managing OpenShift with Ansible (`kubernetes.core`)
+# OpenShift Logging Stack with Ansible + GitOps
 
-This repository runs Ansible playbooks against an OpenShift cluster using the
-`kubernetes.core` collection. That collection needs the Python `kubernetes`
-client library, which is installed with **pip** (RHEL 10 does not ship
-`python3-kubernetes` via `dnf`).
+Deploy OpenShift GitOps (Argo CD), then use Argo CD Applications to install:
 
-All steps below are run on the bastion / Ansible control node.
+- Logging operator
+- Loki operator + LokiStack instance
+- Cluster Observability Operator (COO) + Logging UIPlugin
+- ClusterLogForwarder (logging instance)
+
+Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` collection.
 
 ---
 
-## 1. Install Ansible
+## What `deploy-gitops.yaml` does
+
+`deploy-gitops.yaml` is the main playbook. It runs on `localhost` and uses kubeconfig `ocpkubeconfig`.
+
+### Phase 1 — Install OpenShift GitOps
+
+1. Creates namespace `openshift-gitops-operator`
+2. Creates an OperatorGroup
+3. Creates a Subscription for `openshift-gitops-operator` (channel from `gitopschannel`, default `gitops-1.21`, manual InstallPlan approval)
+4. Waits for and approves the InstallPlan
+5. Waits for the Argo CD CRD and the default `openshift-gitops` ArgoCD instance
+
+### Phase 2 — Create Argo CD Applications
+
+After GitOps is ready, the playbook applies Application manifests from `logging/argoCD/`.  
+Argo CD then syncs each app from this Git repo:
+
+| Ansible task | Application file | What Argo CD deploys |
+|--------------|------------------|----------------------|
+| Deploy logging operator | `logging/argoCD/loggingoperator-app-argo.yaml` | Logging operator (`logging/operator/base`) |
+| Deploy loki operator | `logging/argoCD/lokioperator-app-argo.yaml` | Loki operator (`logging/loki/base`) |
+| Deploy loki instance | `logging/argoCD/loki-instance-app-argo.yaml` | LokiStack + S3 secret/CA (`logging/loki/instance/overlays/rhlab`) |
+| Deploy coo | `logging/argoCD/coo-app-argo.yaml` | COO + Logging UIPlugin (`logging/coo/base`) |
+| Deploy logging instance | `logging/argoCD/logginginstance-app-argo.yaml` | ClusterLogForwarder + RBAC (`logging/instance/base`) |
+
+Ansible does **not** apply the logging/Loki manifests directly. It only creates the Argo CD Applications; Argo CD pulls and syncs from Git.
+
+### Important playbook variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `kubeconfig_path` | `ocpkubeconfig` | Cluster kubeconfig |
+| `gitopschannel` | `gitops-1.21` | GitOps operator channel |
+| `repo_root` | `playbook_dir` | Path to Application YAML files |
+
+Run it:
+
+```bash
+ansible-playbook deploy-gitops.yaml
+```
+
+---
+
+## Prerequisites
+
+Do these on the bastion **before** running the playbook.
+
+### 1. Install Ansible
 
 ```bash
 sudo dnf install -y ansible-core python3-pip
-```
-
-Verify:
-
-```bash
 ansible --version
 ```
 
----
+### 2. Install `kubernetes.core`
 
-## 2. Install the `kubernetes.core` collection
-
-### Online
+**Online:**
 
 ```bash
 mkdir -p collections
 ansible-galaxy collection install kubernetes.core -p collections
 ```
 
-### Offline (disconnected bastion)
-
-On a connected machine:
+**Offline:**
 
 ```bash
+# On a connected machine
 mkdir -p offline-bundle/collections
 ansible-galaxy collection download kubernetes.core -p offline-bundle/collections
-```
 
-Copy `offline-bundle/` to the bastion, then:
-
-```bash
+# On the bastion
 mkdir -p collections
 ansible-galaxy collection install \
   offline-bundle/collections/kubernetes-core-*.tar.gz \
-  -p collections \
-  --offline
+  -p collections --offline
 ```
 
-### Point Ansible at the local collections path
-
-Ensure `ansible.cfg` in this repo contains:
+In `ansible.cfg`:
 
 ```ini
 [defaults]
@@ -61,228 +96,159 @@ COLLECTIONS_PATHS = ./collections
 inventory = ./hosts
 ```
 
-Verify:
-
 ```bash
 ansible-galaxy collection list
 ```
 
-Expected output includes:
+### 3. Install the Python `kubernetes` client (pip)
 
-```text
-Collection        Version
------------------ -------
-kubernetes.core   6.6.0
-```
-
----
-
-## 3. Install the Python `kubernetes` library with pip
-
-`kubernetes.core` modules (for example `kubernetes.core.k8s_info`) import the
-Python package named `kubernetes`. Install it for the same interpreter Ansible
-uses (typically `/usr/bin/python3`):
+RHEL 10 has no `python3-kubernetes` RPM.
 
 ```bash
 python3 -m pip install --user kubernetes
-```
-
-Verify the import:
-
-```bash
 python3 -c "import kubernetes; print(kubernetes.__version__)"
 ```
 
----
-
-## 4. Prepare OpenShift credentials
-
-Log in to the cluster with `oc`, then export a kubeconfig for the playbook:
+### 4. Cluster kubeconfig
 
 ```bash
 oc login --server=<api-url> --token=<token>
-# or: oc login --server=<api-url> -u <user>
-
 oc config view --raw > ocpkubeconfig
 ```
 
-Update `collectocpclusterdetails.yaml` vars as needed:
+Do not commit tokens or kubeconfig files.
 
-| Variable           | Purpose                                      |
-|--------------------|----------------------------------------------|
-| `kubeconfig_path`  | Path to kubeconfig (default: `ocpkubeconfig`) |
+### 5. Align operator Subscriptions with your cluster
 
-Do not commit real tokens or kubeconfig files to git.
+Before the first sync, update catalog/channel values in:
 
----
-## Pre execute the playbook
-Before to run the playbook
-- Update the operator subscriptions
-  - catalogs name
-  - channel
+- `logging/operator/base/subscription.yaml`
+- `logging/loki/base/subscription.yaml`
+- `logging/coo/base/coo-operator.yaml`
+- GitOps Subscription in `deploy-gitops.yaml` (`gitopschannel`, `source`)
 
----
-Create a S3 storage using a simple solution provided by "guimou Guillaume Moutier"
-https://github.com/rh-aiservices-bu/s4
-
-1) Deploy the application
 ```bash
-# Clone the repository
+oc get catalogsource -n openshift-marketplace
+```
+
+---
+
+## Object storage (S4) for Loki
+
+Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiservices-bu/s4).
+
+### Deploy S4
+
+```bash
 git clone https://github.com/rh-aiservices-bu/s4.git
 cd s4
+```
 
-#Update the password in the "kubernetes/s4-secret.yaml"
-  # UI Authentication (required - set your credentials)
-  UI_USERNAME: admin
-  UI_PASSWORD: redhat # CHANGE THIS before deploying!
-  AWS_SECRET_ACCESS_KEY: s4secret
+Update credentials in `kubernetes/s4-secret.yaml`, then:
 
-#Deploy the s4 solution
-# Create project
+```bash
 oc new-project s4 --display-name="S4 Storage Service"
-
-# Set project labels
 oc label namespace s4 app=s4
-
-# Grant permissions (if needed)
-oc policy add-role-to-user edit <username> -n s4
+# follow the S4 OpenShift/Helm install steps from that repo
 ```
-2) create the bucket storage
-  - Using the UI, client the "create bucket" button
-    - Enter the bucket's name
 
-3) Encode and set Loki S3 Secret values
+Create a bucket in the S4 UI (example name: `loggingstack`).
 
-Secret `logging-loki-s3` stores object-storage settings as **base64** under `data:`.
+### Encode Loki S3 Secret values
 
-- Base file: `logging/loki/instance/base/logging-loki-s3.yaml`
-- rhlab overlay patch: `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml`
+Files:
 
-Required keys:
+- Base: `logging/loki/instance/base/logging-loki-s3.yaml`
+- rhlab overlay: `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml`
 
-| Key | Plaintext example | Purpose |
-|-----|-------------------|--------|
-| `access_key_id` | `s4admin` | S3 access key |
-| `access_key_secret` | `s4secret` | S3 secret key |
-| `bucketnames` | `loggingstack` | Bucket created in S4 UI |
-| `endpoint` | `https://s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com` | S3 API URL (no trailing space) |
-| `forcepathstyle` | `true` | Path-style addressing for S4/RGW |
-
-Encode each value with `printf` (avoids a trailing newline from `echo`):
+| Key | Example plaintext |
+|-----|-------------------|
+| `access_key_id` | `s4admin` |
+| `access_key_secret` | `s4secret` |
+| `bucketnames` | `loggingstack` |
+| `endpoint` | `https://s4-api-s4.apps.<cluster-domain>` (no trailing space) |
+| `forcepathstyle` | `true` |
 
 ```bash
-# Generic form
 printf '%s' '<plaintext-value>' | base64 -w0; echo
-
-# Examples
-printf '%s' 's4admin' | base64 -w0; echo
-printf '%s' 's4secret' | base64 -w0; echo
-printf '%s' 'loggingstack' | base64 -w0; echo
-printf '%s' 'https://s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com' | base64 -w0; echo
-printf '%s' 'true' | base64 -w0; echo
+printf '%s' '<base64-value>' | base64 -d; echo   # verify
 ```
 
-Decode to verify:
+### Update Loki TLS CA bundle (HTTPS endpoints)
+
+LokiStack uses ConfigMap `loki-s3-ca-bundle` key `service-ca.crt`.
+
+- Base: `logging/loki/instance/base/loki-s3-ca-bundle.yaml`
+- rhlab patch: `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml`
+
+Indent every PEM line under `service-ca.crt: |` (or YAML will treat `---` as a document break).
 
 ```bash
-printf '%s' '<base64-value>' | base64 -d; echo
-```
-
-Paste the base64 strings into `data:` in
-`logging/loki/instance/base/logging-loki-s3.yaml`, or into the `value:`
-fields of
-`logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml` when
-using the rhlab overlay.
-
-4) Update the Loki S3 TLS CA bundle (required for HTTPS S4 routes)
-
-LokiStack trusts object storage TLS via ConfigMap `loki-s3-ca-bundle`
-(`spec.storage.tls.caName`). The key name must be `service-ca.crt`.
-
-- Base file (default / non-rhlab): `logging/loki/instance/base/loki-s3-ca-bundle.yaml`
-- rhlab overlay patch (preferred for this lab): `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml`
-
-Get the CA that signs your S4 API route certificate (example host
-`s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com`):
-
-```bash
-# Dump the certificate chain presented by the S4 API route
 echo | openssl s_client -showcerts \
-  -servername s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com \
-  -connect s4-api-s4.apps.ocprd3.ebeaudoi.tamlab.rdu2.redhat.com:443 \
+  -servername s4-api-s4.apps.<cluster-domain> \
+  -connect s4-api-s4.apps.<cluster-domain>:443 \
   2>/dev/null \
 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > /tmp/s4-chain.pem
-
-# Inspect subjects: cert 0 is usually the leaf; use the issuer/CA cert(s)
-csplit -f /tmp/s4-cert- -b '%02d.pem' /tmp/s4-chain.pem \
-  '/-----BEGIN CERTIFICATE-----/' '{*}' >/dev/null 2>&1 || true
-for f in /tmp/s4-cert-*.pem; do
-  [ -s "$f" ] || continue
-  echo "==== $f ===="
-  openssl x509 -in "$f" -noout -subject -issuer 2>/dev/null || true
-done
 ```
 
-Alternate (default OpenShift ingress CA — only if the route uses the
-cluster router cert, not a custom cert):
+Use the **issuer/CA** cert (not only the leaf) in the ConfigMap/patch.
+
+Also set Loki `storageClassName` to a StorageClass that exists on the cluster:
 
 ```bash
-oc get secret router-ca -n openshift-ingress-operator \
-  -o jsonpath='{.data.tls\.crt}' | base64 -d
+oc get storageclass
 ```
 
-Paste the CA PEM into `data.service-ca.crt` in
-`logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml`
-(or into the base ConfigMap if you are not using the rhlab overlay).
+Example for this lab: `thin-csi` in `logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml`.
 
-Validate the overlay:
+---
 
-```bash
-oc kustomize logging/loki/instance/overlays/rhlab | oc apply --dry-run=client -f -
-```
+## Loki node placement (taints)
 
-5) Place the Loki instance on tainted infra nodes
-
-The LokiStack CR in `logging/loki/instance/base/03-loki-cr.yaml` schedules
-Loki components onto nodes that are both labeled as infra and tainted for
-Loki. Pods will stay `Pending` until matching nodes exist.
-
-Required node settings (must match the CR):
+LokiStack in `logging/loki/instance/base/03-loki-cr.yaml` runs on infra nodes with a Loki taint. Pods stay `Pending` until nodes match.
 
 - Label: `node-role.kubernetes.io/infra=`
 - Taint: `workload=loki:NoSchedule`
 
 ```bash
-# Replace NODE with the worker/infra node name(s)
 NODE=<node-name>
-
 oc label node "$NODE" node-role.kubernetes.io/infra=
 oc adm taint node "$NODE" workload=loki:NoSchedule
 
-# Verify
 oc get nodes -l node-role.kubernetes.io/infra \
   -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
 ```
 
 ---
 
-## 6. Run the playbook
+## Run the deployment
 
-From the repository root:
+1. Commit and push Git changes Argo CD should sync (secrets, CA, overlays, apps).
+2. From the repo root:
 
 ```bash
-ansible-playbook collectocpclusterdetails.yaml
+ansible-playbook deploy-gitops.yaml
 ```
 
-The sample playbook queries pods in the `default` namespace via
-`kubernetes.core.k8s_info`.
+3. Watch Applications:
+
+```bash
+oc get applications -n openshift-gitops
+oc get pods -n openshift-logging
+oc get lokistack logging-loki -n openshift-logging
+```
+
 ---
 
 ## Troubleshooting
 
-| Error | Cause | Fix |
-|-------|--------|-----|
-| `Failed to import the required Python library (kubernetes)` | pip package missing for Ansible's Python | `python3 -m pip install --user kubernetes` |
-| `Unable to find a match: python3-kubernetes` | No RPM on RHEL 10 AppStream/BaseOS | Use pip (step 3); do not rely on `dnf` for this package |
-| Collection not found | Wrong `COLLECTIONS_PATHS` or missing install | Re-run step 2 and confirm `ansible.cfg` |
-| Auth / connection failures | Bad kubeconfig or token | Re-run `oc login` and refresh `ocpkubeconfig` / `ocp_token` |
+| Symptom | Likely cause | What to do |
+|---------|--------------|------------|
+| `Failed to import ... kubernetes` | Missing pip package | `python3 -m pip install --user kubernetes` |
+| `Unable to find a match: python3-kubernetes` | No RPM on RHEL 10 | Use pip, not dnf |
+| Argo `unknown field "Â ... automated"` | Non-breaking spaces in YAML | Replace NBSPs with normal spaces |
+| `invalid document separator: -----BEGIN CERTIFICATE-----` | PEM not indented under `\|` | Indent CA lines in the ConfigMap |
+| `pod has unbound immediate PersistentVolumeClaims` | Wrong/missing StorageClass | Set `storageClassName` to an existing SC (e.g. `thin-csi`) |
+| `CatalogSourcesUnhealthy` | Bad catalog name or unhealthy CS | `oc get catalogsource -n openshift-marketplace` and fix Subscription `source` |
+| `UIPlugin` CRD / resource not found | COO not ready or Argo RBAC | Wait for COO CSV/CRD; ensure UIPlugin create RBAC exists |
+| Loki pods Pending on scheduling | Missing infra label/taint | Label + taint nodes as above |
