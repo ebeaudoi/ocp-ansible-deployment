@@ -1,4 +1,6 @@
-# Equivalent of: oc adm policy add-role-to-group view system:authenticated -n <ns>
+# From setup-keycloak-namespace.sh:
+#   oc adm policy add-role-to-group view system:authenticated -n <NAMESPACE>
+#   oc label rolebinding view purpose=Keycloak -n <NAMESPACE>
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:

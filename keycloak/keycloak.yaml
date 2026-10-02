@@ -1,0 +1,56 @@
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: keycloak
+  namespace: <NAMESPACE>
+  labels:
+    app: sso
+    purpose: <NAMESPACE>
+spec:
+  additionalOptions:
+  # to enable debug 
+    #  - name: log-level
+    #    value: 'INFO,org.keycloak.authentication.authenticators.x509:DEBUG,org.keycloak.services.x509:DEBUG'
+  # to enable 2SSL to sign in with a certificate. Notice that needs a secret with the ca-bundle.pem file
+    # - name: https-client-auth
+    #   value: request
+    # - name: https-trust-store-file
+    #   value: /opt/keycloak/conf/truststores/ca-bundle.pem
+    # - name: https-trust-store-type
+    #   value: PEM
+  db:
+    passwordSecret:
+      key: password
+      name: keycloak-postgres-pguser-keycloak
+    url: jdbc:postgresql://keycloak-postgres-primary.<NAMESPACE>.svc:5432/keycloak?currentSchema=public&sslmode=require
+    usernameSecret:
+      key: user
+      name: keycloak-postgres-pguser-keycloak
+    vendor: postgres
+  hostname:
+    hostname: <HOSTNAME>  # Replace with your OpenShift route hostname
+  http:
+    tlsSecret: <NAMESPACE>-tls-secret # the certificate for keycloak
+  instances: 1
+  ingress:
+    enabled: true
+  # unsupported:
+  #   podTemplate:
+  #     spec:
+  #       containers:
+  #       - env:
+  #         name: keycloak
+  #         volumeMounts:
+  #         - mountPath: /opt/keycloak/conf/truststores
+  #           name: truststore
+  #           readOnly: true
+  #         - mountPath: /opt/keycloak/providers
+  #           name: custom-providers
+  #           readOnly: true
+  #       volumes:
+  #       - name: truststore
+  #         secret:
+  #           secretName: keycloak-client-ca-bundle
+  #       - configMap:
+  #           name: keycloak-custom-providers
+  #         name: custom-providers

@@ -1,0 +1,10 @@
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhbk-operator
+  namespace: keycloak
+  labels:
+    purpose: Keycloak
+spec:
+  targetNamespaces:
+    - keycloak

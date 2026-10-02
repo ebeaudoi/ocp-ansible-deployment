@@ -1,3 +1,7 @@
+# From setup-keycloak-namespace.sh:
+#   oc create namespace <NAMESPACE>
+#   oc label namespace <NAMESPACE> purpose=Keycloak
+#   oc annotate namespace <NAMESPACE> openshift.io/description="Namespace to host Keycloak services"
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -7,4 +11,3 @@ metadata:
     argocd.argoproj.io/managed-by: openshift-gitops
   annotations:
     openshift.io/description: Namespace to host Keycloak services
-    openshift.io/display-name: Keycloak
