@@ -17,7 +17,7 @@ spec:
       name: keycloak-postgres-pguser-keycloak
       key: password
   hostname:
-    hostname: keycloak.apps.example.com
+    hostname: keycloak.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com
   http:
     tlsSecret: keycloak-tls-secret
   instances: 1
