@@ -5,8 +5,24 @@
 # Edit the parameters in the HEADER section, then run:
 #   ./configure-logging-patches.sh
 #
-# The script rewrites the kustomize overlay patch files used by the logging
-# (and optional S4) deployment.
+# The script rewrites every lab/environment kustomize patch used by logging
+# (and optional S4).
+#
+# Logging kustomize patch inventory (under logging/):
+#   1) logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml
+#      - access_key_id, access_key_secret, bucketnames, endpoint, forcepathstyle
+#   2) logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml
+#      - schema effectiveDate/version, S3 secret ref, tls.caName, storageClassName
+#   3) logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml
+#      - service-ca.crt (fetched when S4 is deployed on the cluster)
+#
+# Related S4 patches (outside logging/, still driven by this script when
+# S4_ENABLED=true):
+#   4) s4/overlays/lab/s4-route-s3-patch.yaml  (spec.host)
+#   5) s4/overlays/lab/s4-secret-patch.yaml    (AWS_* + UI_*)
+#
+# Note: logging/coo/base/coo-uiplugin-patcher*.yaml are ClusterRole(Binding)
+# resources named "patcher", not kustomize overlay patches — not managed here.
 # =============================================================================
 
 set -euo pipefail
@@ -27,32 +43,42 @@ S4_ENABLED=true
 S4_DEPLOYED_ON_CLUSTER=true
 
 # --- S4 overlay parameters (s4/overlays/lab) ---
+# Used by: s4-route-s3-patch.yaml, s4-secret-patch.yaml
+# Also used as defaults for Loki S3 fields when S4_ENABLED=true.
 S4_API_HOST="s3.s4.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"
 S4_AWS_ACCESS_KEY_ID="s4admin"
 S4_AWS_SECRET_ACCESS_KEY="s4secret"
 S4_UI_USERNAME="admin"
 S4_UI_PASSWORD="changeme"
 
-# --- Loki S3 / object-storage parameters
+# --- Loki S3 secret patch values
 # (logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml) ---
-# When S4_ENABLED=true these default from the S4_* values above unless you
-# override them here (leave empty to inherit).
-LOKI_S3_ACCESS_KEY_ID="s4admin"
-LOKI_S3_ACCESS_KEY_SECRET="s4secret"
+# Leave ACCESS_KEY / SECRET / ENDPOINT empty to inherit from S4_* when
+# S4_ENABLED=true.
+LOKI_S3_ACCESS_KEY_ID=""
+LOKI_S3_ACCESS_KEY_SECRET=""
 LOKI_S3_BUCKET="loggingstack"
-LOKI_S3_ENDPOINT="https://s3.s4.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"          # empty + S4_ENABLED => https://${S4_API_HOST}
+LOKI_S3_ENDPOINT=""          # empty + S4_ENABLED => https://${S4_API_HOST}
 LOKI_S3_FORCE_PATH_STYLE="true"
 
-# --- LokiStack CR parameters
+# --- LokiStack CR patch values
 # (logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml) ---
 LOKI_STORAGE_CLASS="thin-csi"
 LOKI_SCHEMA_EFFECTIVE_DATE="2026-06-15"
 LOKI_SCHEMA_VERSION="v13"
+LOKI_S3_SECRET_NAME="logging-loki-s3"
+LOKI_S3_SECRET_TYPE="s3"
+LOKI_TLS_CA_NAME="loki-s3-ca-bundle"
 
-# --- Optional kubeconfig (only needed if resolving Route via oc) ---
+# --- Loki TLS CA bundle patch
+# (logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml) ---
+# Populated automatically when S4_ENABLED=true and S4_DEPLOYED_ON_CLUSTER=true.
+# No manual PEM value needed in the header.
+
+# --- Optional kubeconfig / Route lookup ---
 KUBECONFIG_PATH="${REPO_ROOT}/ocpkubeconfig"
 S4_NAMESPACE="s4"
-S4_API_ROUTE_NAME="s3.s4.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"
+S4_API_ROUTE_NAME="s4-api"   # OpenShift Route object name (not the hostname)
 
 # =============================================================================
 # Paths (normally leave as-is)
@@ -88,6 +114,13 @@ resolve_loki_s3_params() {
     : "${LOKI_S3_ENDPOINT:?LOKI_S3_ENDPOINT is required when S4_ENABLED=false}"
   fi
   : "${LOKI_S3_BUCKET:?LOKI_S3_BUCKET is required}"
+  : "${LOKI_S3_FORCE_PATH_STYLE:?LOKI_S3_FORCE_PATH_STYLE is required}"
+  : "${LOKI_STORAGE_CLASS:?LOKI_STORAGE_CLASS is required}"
+  : "${LOKI_SCHEMA_EFFECTIVE_DATE:?LOKI_SCHEMA_EFFECTIVE_DATE is required}"
+  : "${LOKI_SCHEMA_VERSION:?LOKI_SCHEMA_VERSION is required}"
+  : "${LOKI_S3_SECRET_NAME:?LOKI_S3_SECRET_NAME is required}"
+  : "${LOKI_S3_SECRET_TYPE:?LOKI_S3_SECRET_TYPE is required}"
+  : "${LOKI_TLS_CA_NAME:?LOKI_TLS_CA_NAME is required}"
 }
 
 write_s4_route_patch() {
@@ -160,10 +193,10 @@ spec:
       - effectiveDate: "${LOKI_SCHEMA_EFFECTIVE_DATE}"
         version: ${LOKI_SCHEMA_VERSION}
     secret:
-      name: logging-loki-s3
-      type: s3
+      name: ${LOKI_S3_SECRET_NAME}
+      type: ${LOKI_S3_SECRET_TYPE}
     tls:
-      caName: loki-s3-ca-bundle
+      caName: ${LOKI_TLS_CA_NAME}
   storageClassName: ${LOKI_STORAGE_CLASS}
 EOF
   echo "Updated ${LOKI_CR_PATCH}"
@@ -227,9 +260,6 @@ maybe_resolve_s4_host_from_cluster() {
   if [[ -n "${live_host}" ]]; then
     echo "Resolved live S4 API Route host: ${live_host}"
     S4_API_HOST="${live_host}"
-    if [[ "${S4_ENABLED}" == "true" && -z "${LOKI_S3_ENDPOINT}" ]]; then
-      LOKI_S3_ENDPOINT="https://${S4_API_HOST}"
-    fi
   fi
 }
 
@@ -268,6 +298,10 @@ main() {
   fi
 
   resolve_loki_s3_params
+
+  echo "  LOKI_S3_ENDPOINT=${LOKI_S3_ENDPOINT}"
+  echo "  LOKI_S3_BUCKET=${LOKI_S3_BUCKET}"
+  echo "  LOKI_STORAGE_CLASS=${LOKI_STORAGE_CLASS}"
 
   if [[ "${S4_ENABLED}" == "true" ]]; then
     write_s4_route_patch
