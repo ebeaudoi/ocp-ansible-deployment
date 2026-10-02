@@ -6,6 +6,7 @@ Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize an
 
 ```text
 keycloak/
+├── configure-keycloak-patches.sh   # Edit header params → rewrite lab overlays
 ├── crunchy/
 │   ├── operator/                   # Crunchy Postgres Operator (OLM)
 │   │   ├── base/
@@ -34,22 +35,28 @@ All application components run in namespace **`keycloak`**. The Crunchy operator
 
 ## Lab customization (before deploy)
 
-Edit these files for your cluster:
+Edit the **HEADER** in [`configure-keycloak-patches.sh`](configure-keycloak-patches.sh), then run:
 
-| File | What to set |
-|------|-------------|
-| [`operator/overlays/lab/subscription-patch.yaml`](operator/overlays/lab/subscription-patch.yaml) | RHBK `channel` / `source` |
-| [`crunchy/operator/overlays/lab/subscription-patch.yaml`](crunchy/operator/overlays/lab/subscription-patch.yaml) | Crunchy `channel` / `source` |
-| [`crunchy/instance/overlays/lab/postgrescluster-patch.yaml`](crunchy/instance/overlays/lab/postgrescluster-patch.yaml) | Postgres storage sizes / replicas |
-| [`instance/overlays/lab/keycloak-patch.yaml`](instance/overlays/lab/keycloak-patch.yaml) | Keycloak `hostname` and `tlsSecret` name |
+```bash
+./keycloak/configure-keycloak-patches.sh
+```
 
-If you change the Keycloak hostname, regenerate TLS material (must match the hostname / SAN):
+That rewrites the lab overlay patches (and regenerates TLS when `GENERATE_TLS=true`):
+
+| Parameter | Overlay file |
+|-----------|--------------|
+| `RHBK_*` | `operator/overlays/lab/subscription-patch.yaml` |
+| `CRUNCHY_*` | `crunchy/operator/overlays/lab/subscription-patch.yaml` |
+| `POSTGRES_*` | `crunchy/instance/overlays/lab/postgrescluster-patch.yaml` |
+| `KEYCLOAK_HOSTNAME` / `KEYCLOAK_TLS_SECRET` | `instance/overlays/lab/keycloak-patch.yaml` |
+| `KEYCLOAK_NAMESPACE` | lab `kustomization.yaml` namespaces |
+| `GENERATE_TLS` | `instance/overlays/lab/tls.crt` + `tls.key` |
+
+Or regenerate TLS alone:
 
 ```bash
 ./keycloak/instance/overlays/lab/generate-tls.sh keycloak.apps.<cluster-domain>
 ```
-
-That writes `tls.crt` / `tls.key` used by Kustomize `secretGenerator` to create Secret `keycloak-tls-secret`.
 
 ## Deploy
 
