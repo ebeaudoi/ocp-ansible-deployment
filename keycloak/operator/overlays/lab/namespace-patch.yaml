@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keycloak
+  labels:
+    purpose: Keycloak
+  annotations:
+    openshift.io/description: Namespace to host Keycloak services
