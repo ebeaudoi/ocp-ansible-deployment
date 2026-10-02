@@ -6,4 +6,4 @@ metadata:
     openshift.io/node-selector: ""
   labels:
     openshift.io/cluster-monitoring: "true"
-    argocd.argoproj.io/managed-by: logging-gitops
+    argocd.argoproj.io/managed-by: openshift-gitops

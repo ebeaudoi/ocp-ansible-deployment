@@ -11,6 +11,7 @@
 
 
   tasks:
+    # Sanity-check cluster API access via the marketplace namespace
     - name: Fetch list of pods
       kubernetes.core.k8s_info:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -19,8 +20,10 @@
         kind: Pod
         namespace: openshift-marketplace
       register: pod_list
-    
-    # --- Item 2: OpenShift GitOps Operator ---
+
+    # --- OpenShift GitOps Operator ---
+
+    # Create the namespace that hosts the GitOps operator
     - name: Ensure GitOps operator namespace exists
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -29,6 +32,7 @@
         name: openshift-gitops-operator
         state: present
 
+    # Scope the GitOps operator install to its operator namespace
     - name: Create GitOps OperatorGroup
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -41,6 +45,7 @@
           spec:
             upgradeStrategy: Default
 
+    # Subscribe to the GitOps operator (manual InstallPlan approval)
     - name: Create GitOps Subscription (Manual Approval)
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -57,6 +62,7 @@
             sourceNamespace: openshift-marketplace
             installPlanApproval: Manual
 
+    # Poll until OLM creates an InstallPlan for the Subscription
     - name: Wait for GitOps InstallPlan to be generated
       kubernetes.core.k8s_info:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -69,6 +75,7 @@
       retries: 30
       delay: 10
 
+    # Approve pending InstallPlans so the operator can install
     - name: Approve GitOps InstallPlan
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -83,6 +90,7 @@
       loop: "{{ gitops_install_plans.resources | default([]) }}"
       when: not (item.spec.approved | default(false))
 
+    # Wait until the ArgoCD CRD is available cluster-wide
     - name: Wait for ArgoCD CRD to be established
       kubernetes.core.k8s_info:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -95,6 +103,7 @@
       retries: 30
       delay: 10
 
+    # Wait for the default openshift-gitops Argo CD instance
     - name: Wait for default ArgoCD instance in openshift-gitops namespace
       kubernetes.core.k8s_info:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -108,52 +117,46 @@
       retries: 40
       delay: 10
 
-    - name: Deploy logging GitOps ArgoCD instance
+    # --- Logging Argo CD project + Applications ---
+
+    # Create AppProject applogging for all logging Applications
+    - name: Deploy applogging AppProject
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
-        src: "{{ repo_root }}/logging/argoCD/logging-gitops-argocd.yaml"
+        src: "{{ repo_root }}/logging/argoCD/applogging-project.yaml"
         state: present
 
-    - name: Wait for logging ArgoCD instance in logging-gitops namespace
-      kubernetes.core.k8s_info:
-        kubeconfig: "{{ kubeconfig_path }}"
-        api_version: argoproj.io/v1beta1
-        kind: ArgoCD
-        namespace: logging-gitops
-        name: logging-gitops
-      register: logging_argocd_instance
-      failed_when: false
-      until: (logging_argocd_instance.resources | default([])) | length > 0
-      retries: 40
-      delay: 10
-
+    # Register the Logging operator Application under project applogging
     - name: Deploy logging operator
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         src: "{{ repo_root }}/logging/argoCD/loggingoperator-app-argo.yaml"
         state: present
 
-    - name: Deploy loki operator 
+    # Register the Loki operator Application under project applogging
+    - name: Deploy loki operator
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         src: "{{ repo_root }}/logging/argoCD/lokioperator-app-argo.yaml"
         state: present
 
+    # Register the LokiStack instance Application under project applogging
     - name: Deploy loki instance
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         src: "{{ repo_root }}/logging/argoCD/loki-instance-app-argo.yaml"
         state: present
 
+    # Register the Cluster Observability Operator Application under project applogging
     - name: Deploy coo
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         src: "{{ repo_root }}/logging/argoCD/coo-app-argo.yaml"
         state: present
 
+    # Register the ClusterLogForwarder / logging instance Application under project applogging
     - name: Deploy logging instance
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         src: "{{ repo_root }}/logging/argoCD/logginginstance-app-argo.yaml"
         state: present
-

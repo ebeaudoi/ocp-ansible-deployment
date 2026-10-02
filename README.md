@@ -1,6 +1,6 @@
 # OpenShift Logging Stack with Ansible + GitOps
 
-Deploy OpenShift GitOps (Argo CD), a dedicated logging Argo CD instance, then use Argo CD Applications to install:
+Deploy OpenShift GitOps (Argo CD), then use Argo CD Applications to install:
 
 - Logging operator
 - Loki operator + LokiStack instance
@@ -19,14 +19,13 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
 deploy-gitops.yaml
   ├── OpenShift GitOps operator
   ├── default Argo CD (openshift-gitops)
-  └── logging-gitops Argo CD instance
-        └── logging Applications (operator, Loki, COO, CLF)
+  └── logging Applications (operator, Loki, COO, CLF)
 
 deploy-s4.yaml
   └── S4 (s4/overlays/lab) + loggingstack bucket
 ```
 
-Logging Applications live in the **`logging-gitops`** namespace (not the default `openshift-gitops` instance). Target namespaces are labeled `argocd.argoproj.io/managed-by: logging-gitops` so the secondary Argo CD instance can manage them.
+Logging Applications live in the default **`openshift-gitops`** Argo CD instance, under AppProject **`applogging`**.
 
 ---
 
@@ -42,15 +41,10 @@ Logging Applications live in the **`logging-gitops`** namespace (not the default
 4. Waits for and approves the InstallPlan
 5. Waits for the Argo CD CRD and the default `openshift-gitops` ArgoCD instance
 
-### Phase 2 — Create the logging Argo CD instance
+### Phase 2 — Create logging Argo CD Applications
 
-1. Applies `logging/argoCD/logging-gitops-argocd.yaml` (Namespace + ArgoCD CR `logging-gitops`)
-2. Waits for `ArgoCD/logging-gitops` in namespace `logging-gitops`
-
-### Phase 3 — Create logging Argo CD Applications
-
-After the logging GitOps instance is ready, the playbook applies Application manifests from `logging/argoCD/`.  
-Those Applications are created in **`logging-gitops`**. Argo CD then syncs each app from this Git repo:
+After GitOps is ready, the playbook creates AppProject `applogging`, then applies Application manifests from `logging/argoCD/`.  
+Those Applications are created in **`openshift-gitops`** with `project: applogging`. Argo CD then syncs each app from this Git repo:
 
 | Ansible task | Application file | What Argo CD deploys |
 |--------------|------------------|----------------------|
@@ -295,8 +289,8 @@ ansible-playbook deploy-gitops.yaml
 5. Watch Applications and workloads:
 
 ```bash
-oc get argocd -n logging-gitops
-oc get applications -n logging-gitops
+oc get appproject applogging -n openshift-gitops
+oc get applications -n openshift-gitops -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project
 oc get pods -n s4
 oc get pods -n openshift-logging
 oc get lokistack logging-loki -n openshift-logging
@@ -318,4 +312,3 @@ oc get lokistack logging-loki -n openshift-logging
 | `CatalogSourcesUnhealthy` | Bad catalog name or unhealthy CS | `oc get catalogsource -n openshift-marketplace` and fix Subscription `source` |
 | `UIPlugin` CRD / resource not found | COO not ready or Argo RBAC | Wait for COO CSV/CRD; ensure UIPlugin create RBAC exists |
 | Loki pods Pending on scheduling | Missing infra label/taint | Label + taint nodes as above |
-| Logging apps missing in default Argo UI | Apps are on secondary instance | Check `oc get applications -n logging-gitops` |

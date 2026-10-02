@@ -4,6 +4,6 @@ metadata:
   name: openshift-logging
   labels:
     openshift.io/cluster-monitoring: "true"
-    argocd.argoproj.io/managed-by: logging-gitops
+    argocd.argoproj.io/managed-by: openshift-gitops
   annotations:
     openshift.io/display-name: Red Hat Logging
