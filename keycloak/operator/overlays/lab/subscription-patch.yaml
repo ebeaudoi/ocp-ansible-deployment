@@ -8,4 +8,3 @@ spec:
   installPlanApproval: Automatic
   source: cs-redhat-catalog
   sourceNamespace: openshift-marketplace
-  startingCSV: rhbk-operator.v26.2.9-opr.1
