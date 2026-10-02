@@ -219,7 +219,7 @@ In command line:
 1) extract minio certificate. 
 
 in command line: 
-`openssl s_client -connect aistor-api.apps.os4.devu.ca:443 -showcerts </dev/null 2>/dev/null | openssl x509 -out storage-ca.crt` 
+`openssl s_client -connect aistor-api.apps.<cluster-domain>:443 -showcerts </dev/null 2>/dev/null | openssl x509 -out storage-ca.crt` 
 
 Create the following yaml files (2-5) and put them in a designated folder:
 

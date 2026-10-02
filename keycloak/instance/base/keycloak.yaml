@@ -7,6 +7,9 @@ metadata:
     app: sso
     purpose: Keycloak
 spec:
+  additionalOptions:
+    - name: metrics-enabled
+      value: "true"
   db:
     vendor: postgres
     url: jdbc:postgresql://keycloak-postgres-primary.keycloak.svc:5432/keycloak?currentSchema=public&sslmode=require
