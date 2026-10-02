@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: progres-storage
-  labels:
-    purpose: keycloak
-    argocd.argoproj.io/managed-by: openshift-gitops

@@ -17,7 +17,8 @@ spec:
       name: keycloak-postgres-pguser-keycloak
       key: password
   hostname:
-    hostname: keycloak.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com
+    # Overridden in overlays/lab/keycloak-patch.yaml
+    hostname: keycloak.apps.example.com
   http:
     tlsSecret: keycloak-tls-secret
   instances: 1

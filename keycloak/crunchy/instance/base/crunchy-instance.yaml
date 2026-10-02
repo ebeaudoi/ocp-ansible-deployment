@@ -2,7 +2,7 @@ apiVersion: postgres-operator.crunchydata.com/v1beta1
 kind: PostgresCluster
 metadata:
   name: keycloak-postgres
-  namespace: progres-storage
+  namespace: keycloak
   labels:
     purpose: keycloak
 spec:
