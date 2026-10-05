@@ -54,6 +54,7 @@ POSTGRES_INSTANCE_STORAGE="150Gi"
 POSTGRES_BACKUP_STORAGE="10Gi"
 
 # Keycloak CR (instance/overlays/<name>/keycloak-patch.yaml)
+# Bare DNS name only — no leading "/", no https:// (breaks openssl -subj).
 KEYCLOAK_HOSTNAME="keycloak.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"
 KEYCLOAK_TLS_SECRET="keycloak-tls-secret"
 
@@ -121,12 +122,32 @@ resolve_keycloak_params() {
   : "${GIT_REPO_URL:?GIT_REPO_URL is required}"
   : "${GIT_TARGET_REVISION:?GIT_TARGET_REVISION is required}"
   : "${GIT_TLS_INSECURE:?GIT_TLS_INSECURE is required}"
+  normalize_keycloak_hostname
   if [[ -z "${GIT_TLS_HOST}" ]]; then
     GIT_TLS_HOST="$(git_host_from_url "${GIT_REPO_URL}")"
   fi
   if [[ "${GIT_TLS_INSECURE}" != "true" && -n "${GIT_CA_FILE}" && ! -f "${GIT_CA_FILE}" ]]; then
     echo "ERROR: GIT_CA_FILE not found: ${GIT_CA_FILE}" >&2
     exit 1
+  fi
+}
+
+normalize_keycloak_hostname() {
+  local raw="${KEYCLOAK_HOSTNAME}"
+  KEYCLOAK_HOSTNAME="${KEYCLOAK_HOSTNAME#https://}"
+  KEYCLOAK_HOSTNAME="${KEYCLOAK_HOSTNAME#http://}"
+  while [[ "${KEYCLOAK_HOSTNAME}" == /* ]]; do
+    KEYCLOAK_HOSTNAME="${KEYCLOAK_HOSTNAME#/}"
+  done
+  KEYCLOAK_HOSTNAME="${KEYCLOAK_HOSTNAME%%/*}"
+  if [[ -z "${KEYCLOAK_HOSTNAME}" ]]; then
+    echo "ERROR: invalid KEYCLOAK_HOSTNAME '${raw}'" >&2
+    echo "       Use a bare DNS name, e.g. keycloak.apps.os7.devu.ca" >&2
+    echo "       (a leading '/' breaks openssl: Missing '=' after RDN type string)" >&2
+    exit 1
+  fi
+  if [[ "${raw}" != "${KEYCLOAK_HOSTNAME}" ]]; then
+    echo "Normalized KEYCLOAK_HOSTNAME: '${raw}' -> '${KEYCLOAK_HOSTNAME}'"
   fi
 }
 
