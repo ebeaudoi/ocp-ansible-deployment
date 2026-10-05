@@ -1,0 +1,9 @@
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: keycloak
+spec:
+  hostname:
+    hostname: keycloak.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com
+  http:
+    tlsSecret: keycloak-tls-secret

@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
-# Deploy Keycloak stack (operators -> Postgres -> TLS/Keycloak) in a safe order.
+# Deploy or update Keycloak stack (operators -> Postgres -> TLS/Keycloak) in a safe order.
 # Usage (from repo root):
-#   ./keycloak/deploy-keycloak.sh
+#   ./keycloak/deploy-keycloak.sh                 # initial: overlays/lab
 #   ./keycloak/deploy-keycloak.sh overlays/lab
+#   ./keycloak/deploy-keycloak.sh overlays/update # day-2 updates
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OVERLAY="${1:-overlays/lab}"
 KC_NS="keycloak"
+
+case "${OVERLAY}" in
+  overlays/lab|overlays/update) ;;
+  *)
+    echo "ERROR: unsupported overlay '${OVERLAY}' (use overlays/lab or overlays/update)" >&2
+    exit 1
+    ;;
+esac
 
 echo "==> 1/4 Crunchy Postgres operator"
 oc apply -k "${REPO_ROOT}/keycloak/crunchy/operator/${OVERLAY}"

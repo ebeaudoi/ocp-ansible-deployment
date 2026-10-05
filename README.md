@@ -209,6 +209,8 @@ Download the package and its dependencies on a connected machine (prefer the sam
 mkdir -p offline-bundle/pip
 python3 -m pip download kubernetes -d offline-bundle/pip
 
+#if it fails - sudo dnf install python3-pip
+
 # On the bastion (after copying offline-bundle/pip/)
 python3 -m pip install --user --no-index --find-links=offline-bundle/pip kubernetes
 python3 -c "import kubernetes; print(kubernetes.__version__)"

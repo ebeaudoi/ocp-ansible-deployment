@@ -7,20 +7,30 @@ Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize an
 ```text
 keycloak/
 ├── argoCD/                         # AppProject appkeycloak + child Applications
+├── deploy-keycloak.sh              # Ordered oc apply -k (lab or update)
 ├── crunchy/
 │   ├── operator/                   # Crunchy Postgres Operator (OLM)
 │   │   ├── base/
-│   │   └── overlays/lab/
+│   │   ├── overlays/lab/           # Initial deploy values
+│   │   └── overlays/update/        # Day-2 / update values
 │   └── instance/                   # PostgresCluster for Keycloak
 │       ├── base/
-│       └── overlays/lab/
+│       ├── overlays/lab/
+│       └── overlays/update/
 ├── operator/                       # Keycloak namespace + RHBK Operator (OLM)
 │   ├── base/
-│   └── overlays/lab/
+│   ├── overlays/lab/
+│   └── overlays/update/
 └── instance/                       # Keycloak CR + TLS secret
     ├── base/
-    └── overlays/lab/
+    ├── overlays/lab/
+    └── overlays/update/
 ```
+
+| Overlay | Purpose |
+|---------|---------|
+| `overlays/lab` | Initial Keycloak project deploy (Argo CD Applications use this path) |
+| `overlays/update` | Day-2 updates to the same Keycloak project (channels, storage, hostname, TLS) |
 
 All application components run in namespace **`keycloak`**. The Crunchy operator itself runs in **`crunchy-operator`** (cluster-wide / AllNamespaces).
 
@@ -41,21 +51,40 @@ Edit the Keycloak **HEADER** parameters in [`../configure-overlays.sh`](../confi
 ./configure-overlays.sh
 ```
 
-Set `KEYCLOAK_ENABLED=true` (default). That rewrites the lab overlay patches (and regenerates TLS when `GENERATE_TLS=true`):
+Set `KEYCLOAK_ENABLED=true` (default). `KEYCLOAK_OVERLAYS="lab update"` (default) rewrites **both** overlay trees (and regenerates TLS when `GENERATE_TLS=true`):
 
-| Parameter | Overlay file |
+| Parameter | Overlay file (per name in `KEYCLOAK_OVERLAYS`) |
 |-----------|--------------|
-| `RHBK_*` | `operator/overlays/lab/subscription-patch.yaml` |
-| `CRUNCHY_*` | `crunchy/operator/overlays/lab/subscription-patch.yaml` |
-| `POSTGRES_*` | `crunchy/instance/overlays/lab/postgrescluster-patch.yaml` |
-| `KEYCLOAK_HOSTNAME` / `KEYCLOAK_TLS_SECRET` | `instance/overlays/lab/keycloak-patch.yaml` |
-| `KEYCLOAK_NAMESPACE` | lab `kustomization.yaml` namespaces |
-| `GENERATE_TLS` | `instance/overlays/lab/tls.crt` + `tls.key` |
+| `RHBK_*` | `operator/overlays/<name>/subscription-patch.yaml` |
+| `CRUNCHY_*` | `crunchy/operator/overlays/<name>/subscription-patch.yaml` |
+| `POSTGRES_*` | `crunchy/instance/overlays/<name>/postgrescluster-patch.yaml` |
+| `KEYCLOAK_HOSTNAME` / `KEYCLOAK_TLS_SECRET` | `instance/overlays/<name>/keycloak-patch.yaml` |
+| `KEYCLOAK_NAMESPACE` | `<name>/kustomization.yaml` namespaces |
+| `GENERATE_TLS` | `instance/overlays/<name>/tls.crt` + `tls.key` |
 
 Or regenerate TLS alone:
 
 ```bash
 ./keycloak/instance/overlays/lab/generate-tls.sh keycloak.apps.<cluster-domain>
+./keycloak/instance/overlays/update/generate-tls.sh keycloak.apps.<cluster-domain>
+```
+
+### Apply an update overlay (day-2)
+
+After changing HEADER values (or editing `overlays/update` patches), apply the update overlay in order:
+
+```bash
+# From repo root — same order as initial deploy, but using overlays/update
+./keycloak/deploy-keycloak.sh overlays/update
+```
+
+Or manually:
+
+```bash
+oc apply -k keycloak/crunchy/operator/overlays/update
+oc apply -k keycloak/operator/overlays/update
+oc apply -k keycloak/crunchy/instance/overlays/update
+oc apply -k keycloak/instance/overlays/update
 ```
 
 ## GitOps (preferred)

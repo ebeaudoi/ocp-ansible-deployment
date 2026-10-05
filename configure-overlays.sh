@@ -20,12 +20,13 @@
 #   6) s4/overlays/lab/s4-secret-patch.yaml    (AWS_* + UI_*; when S4_ENABLED=true)
 #
 # Keycloak patch inventory (when KEYCLOAK_ENABLED=true):
-#   7) keycloak/operator/overlays/lab/subscription-patch.yaml
-#   8) keycloak/crunchy/operator/overlays/lab/subscription-patch.yaml
-#   9) keycloak/crunchy/instance/overlays/lab/postgrescluster-patch.yaml
-#  10) keycloak/instance/overlays/lab/keycloak-patch.yaml
-#  11) keycloak/*/overlays/lab/kustomization.yaml (namespace)
-#  12) keycloak/instance/overlays/lab/tls.crt + tls.key (when GENERATE_TLS=true)
+#   Written to each overlay listed in KEYCLOAK_OVERLAYS (default: lab update):
+#   7) keycloak/operator/overlays/<name>/subscription-patch.yaml
+#   8) keycloak/crunchy/operator/overlays/<name>/subscription-patch.yaml
+#   9) keycloak/crunchy/instance/overlays/<name>/postgrescluster-patch.yaml
+#  10) keycloak/instance/overlays/<name>/keycloak-patch.yaml
+#  11) keycloak/*/overlays/<name>/kustomization.yaml (namespace)
+#  12) keycloak/instance/overlays/<name>/tls.crt + tls.key (when GENERATE_TLS=true)
 #
 # Note: logging/coo/base/coo-uiplugin-patcher*.yaml are ClusterRole(Binding)
 # resources named "patcher", not kustomize overlay patches — not managed here.
@@ -48,8 +49,10 @@ S4_ENABLED=true
 # (Route reachable). When true, the script fetches the TLS CA from the S4
 # API route and updates loki-s3-ca-bundle-patch.yaml.
 S4_DEPLOYED_ON_CLUSTER=true
-# Set KEYCLOAK_ENABLED=true to rewrite Keycloak / Crunchy / RHBK lab overlays.
+# Set KEYCLOAK_ENABLED=true to rewrite Keycloak / Crunchy / RHBK overlays.
 KEYCLOAK_ENABLED=true
+# Space-separated overlay names under keycloak/*/overlays/ (lab = initial, update = day-2).
+KEYCLOAK_OVERLAYS="lab update"
 
 # --- S4 overlay parameters (s4/overlays/lab) ---
 # Used by: s4-route-s3-patch.yaml, s4-secret-patch.yaml
@@ -101,33 +104,33 @@ KUBECONFIG_PATH="${REPO_ROOT}/ocpkubeconfig"
 S4_NAMESPACE="s4"
 S4_API_ROUTE_NAME="s4-api"   # OpenShift Route object name (not the hostname)
 
-# --- Keycloak overlay parameters (keycloak/*/overlays/lab) ---
+# --- Keycloak overlay parameters (keycloak/*/overlays/<KEYCLOAK_OVERLAYS>) ---
 # Namespace used by Keycloak, PostgresCluster, and RHBK operator resources
 KEYCLOAK_NAMESPACE="keycloak"
 
-# RHBK operator subscription (keycloak/operator/overlays/lab/subscription-patch.yaml)
+# RHBK operator subscription (keycloak/operator/overlays/<name>/subscription-patch.yaml)
 RHBK_CHANNEL="stable-v26.6"
 RHBK_SOURCE="redhat-operators"
 RHBK_SOURCE_NAMESPACE="openshift-marketplace"
 RHBK_INSTALL_PLAN_APPROVAL="Automatic"
 
-# Crunchy operator subscription (keycloak/crunchy/operator/overlays/lab/subscription-patch.yaml)
+# Crunchy operator subscription (keycloak/crunchy/operator/overlays/<name>/subscription-patch.yaml)
 CRUNCHY_CHANNEL="v5"
 CRUNCHY_SOURCE="certified-operators"
 CRUNCHY_SOURCE_NAMESPACE="openshift-marketplace"
 CRUNCHY_INSTALL_PLAN_APPROVAL="Automatic"
 CRUNCHY_OPERATOR_NAMESPACE="crunchy-operator"
 
-# PostgresCluster (keycloak/crunchy/instance/overlays/lab/postgrescluster-patch.yaml)
+# PostgresCluster (keycloak/crunchy/instance/overlays/<name>/postgrescluster-patch.yaml)
 POSTGRES_REPLICAS="1"
 POSTGRES_INSTANCE_STORAGE="150Gi"
 POSTGRES_BACKUP_STORAGE="10Gi"
 
-# Keycloak CR (keycloak/instance/overlays/lab/keycloak-patch.yaml)
+# Keycloak CR (keycloak/instance/overlays/<name>/keycloak-patch.yaml)
 KEYCLOAK_HOSTNAME="keycloak.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"
 KEYCLOAK_TLS_SECRET="keycloak-tls-secret"
 
-# Regenerate keycloak/instance/overlays/lab/tls.crt and tls.key for KEYCLOAK_HOSTNAME
+# Regenerate keycloak/instance/overlays/<name>/tls.crt and tls.key for KEYCLOAK_HOSTNAME
 GENERATE_TLS="true"
 TLS_DAYS_VALID="365"
 
@@ -142,14 +145,16 @@ LOKI_CR_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-cr-pa
 LOKI_PLACEMENT_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml"
 LOKI_CA_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml"
 
-RHBK_SUB_PATCH="${KEYCLOAK_ROOT}/operator/overlays/lab/subscription-patch.yaml"
-CRUNCHY_SUB_PATCH="${KEYCLOAK_ROOT}/crunchy/operator/overlays/lab/subscription-patch.yaml"
-POSTGRES_PATCH="${KEYCLOAK_ROOT}/crunchy/instance/overlays/lab/postgrescluster-patch.yaml"
-KEYCLOAK_PATCH="${KEYCLOAK_ROOT}/instance/overlays/lab/keycloak-patch.yaml"
-RHBK_KUSTOMIZATION="${KEYCLOAK_ROOT}/operator/overlays/lab/kustomization.yaml"
-CRUNCHY_INSTANCE_KUSTOMIZATION="${KEYCLOAK_ROOT}/crunchy/instance/overlays/lab/kustomization.yaml"
-KEYCLOAK_INSTANCE_KUSTOMIZATION="${KEYCLOAK_ROOT}/instance/overlays/lab/kustomization.yaml"
-GENERATE_TLS_SCRIPT="${KEYCLOAK_ROOT}/instance/overlays/lab/generate-tls.sh"
+# Paths set per overlay by set_keycloak_overlay_paths <name>
+RHBK_SUB_PATCH=""
+CRUNCHY_SUB_PATCH=""
+POSTGRES_PATCH=""
+KEYCLOAK_PATCH=""
+RHBK_KUSTOMIZATION=""
+CRUNCHY_OPERATOR_KUSTOMIZATION=""
+CRUNCHY_INSTANCE_KUSTOMIZATION=""
+KEYCLOAK_INSTANCE_KUSTOMIZATION=""
+GENERATE_TLS_SCRIPT=""
 
 # =============================================================================
 # Helpers
@@ -208,6 +213,7 @@ EOF
 
 resolve_keycloak_params() {
   : "${KEYCLOAK_NAMESPACE:?KEYCLOAK_NAMESPACE is required}"
+  : "${KEYCLOAK_OVERLAYS:?KEYCLOAK_OVERLAYS is required}"
   : "${RHBK_CHANNEL:?RHBK_CHANNEL is required}"
   : "${RHBK_SOURCE:?RHBK_SOURCE is required}"
   : "${RHBK_SOURCE_NAMESPACE:?RHBK_SOURCE_NAMESPACE is required}"
@@ -224,6 +230,19 @@ resolve_keycloak_params() {
   : "${KEYCLOAK_TLS_SECRET:?KEYCLOAK_TLS_SECRET is required}"
   : "${GENERATE_TLS:?GENERATE_TLS is required}"
   : "${TLS_DAYS_VALID:?TLS_DAYS_VALID is required}"
+}
+
+set_keycloak_overlay_paths() {
+  local overlay="$1"
+  RHBK_SUB_PATCH="${KEYCLOAK_ROOT}/operator/overlays/${overlay}/subscription-patch.yaml"
+  CRUNCHY_SUB_PATCH="${KEYCLOAK_ROOT}/crunchy/operator/overlays/${overlay}/subscription-patch.yaml"
+  POSTGRES_PATCH="${KEYCLOAK_ROOT}/crunchy/instance/overlays/${overlay}/postgrescluster-patch.yaml"
+  KEYCLOAK_PATCH="${KEYCLOAK_ROOT}/instance/overlays/${overlay}/keycloak-patch.yaml"
+  RHBK_KUSTOMIZATION="${KEYCLOAK_ROOT}/operator/overlays/${overlay}/kustomization.yaml"
+  CRUNCHY_OPERATOR_KUSTOMIZATION="${KEYCLOAK_ROOT}/crunchy/operator/overlays/${overlay}/kustomization.yaml"
+  CRUNCHY_INSTANCE_KUSTOMIZATION="${KEYCLOAK_ROOT}/crunchy/instance/overlays/${overlay}/kustomization.yaml"
+  KEYCLOAK_INSTANCE_KUSTOMIZATION="${KEYCLOAK_ROOT}/instance/overlays/${overlay}/kustomization.yaml"
+  GENERATE_TLS_SCRIPT="${KEYCLOAK_ROOT}/instance/overlays/${overlay}/generate-tls.sh"
 }
 
 # =============================================================================
@@ -567,6 +586,25 @@ EOF
   echo "Updated ${RHBK_KUSTOMIZATION}"
 }
 
+write_crunchy_operator_kustomization() {
+  cat > "${CRUNCHY_OPERATOR_KUSTOMIZATION}" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - path: subscription-patch.yaml
+    target:
+      group: operators.coreos.com
+      version: v1alpha1
+      kind: Subscription
+      name: crunchy-postgres-operator
+EOF
+  echo "Updated ${CRUNCHY_OPERATOR_KUSTOMIZATION}"
+}
+
 write_crunchy_instance_kustomization() {
   cat > "${CRUNCHY_INSTANCE_KUSTOMIZATION}" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -624,10 +662,50 @@ EOF
 }
 
 generate_keycloak_tls() {
+  if [[ ! -f "${GENERATE_TLS_SCRIPT}" ]]; then
+    # Seed generate-tls.sh from the lab overlay when creating a new overlay name.
+    local lab_script="${KEYCLOAK_ROOT}/instance/overlays/lab/generate-tls.sh"
+    if [[ -f "${lab_script}" ]]; then
+      mkdir -p "$(dirname "${GENERATE_TLS_SCRIPT}")"
+      cp "${lab_script}" "${GENERATE_TLS_SCRIPT}"
+    fi
+  fi
   if [[ ! -x "${GENERATE_TLS_SCRIPT}" ]]; then
     chmod +x "${GENERATE_TLS_SCRIPT}"
   fi
   DAYS_VALID="${TLS_DAYS_VALID}" "${GENERATE_TLS_SCRIPT}" "${KEYCLOAK_HOSTNAME}"
+}
+
+ensure_keycloak_overlay_dirs() {
+  local overlay="$1"
+  mkdir -p \
+    "${KEYCLOAK_ROOT}/operator/overlays/${overlay}" \
+    "${KEYCLOAK_ROOT}/crunchy/operator/overlays/${overlay}" \
+    "${KEYCLOAK_ROOT}/crunchy/instance/overlays/${overlay}" \
+    "${KEYCLOAK_ROOT}/instance/overlays/${overlay}"
+}
+
+configure_keycloak_overlay() {
+  local overlay="$1"
+  echo
+  echo "--- Keycloak overlay: ${overlay} ---"
+  ensure_keycloak_overlay_dirs "${overlay}"
+  set_keycloak_overlay_paths "${overlay}"
+
+  write_rhbk_subscription_patch
+  write_crunchy_subscription_patch
+  write_postgres_patch
+  write_keycloak_patch
+  write_rhbk_kustomization
+  write_crunchy_operator_kustomization
+  write_crunchy_instance_kustomization
+  write_keycloak_instance_kustomization
+
+  if [[ "${GENERATE_TLS}" == "true" ]]; then
+    generate_keycloak_tls
+  else
+    echo "Skipping TLS generation for ${overlay} (GENERATE_TLS=false)"
+  fi
 }
 
 configure_keycloak_overlays() {
@@ -635,6 +713,7 @@ configure_keycloak_overlays() {
   echo "=== Keycloak overlays ==="
   resolve_keycloak_params
 
+  echo "  KEYCLOAK_OVERLAYS=${KEYCLOAK_OVERLAYS}"
   echo "  KEYCLOAK_NAMESPACE=${KEYCLOAK_NAMESPACE}"
   echo "  KEYCLOAK_HOSTNAME=${KEYCLOAK_HOSTNAME}"
   echo "  RHBK_CHANNEL=${RHBK_CHANNEL} / ${RHBK_SOURCE}"
@@ -642,19 +721,10 @@ configure_keycloak_overlays() {
   echo "  POSTGRES storage instance=${POSTGRES_INSTANCE_STORAGE} backup=${POSTGRES_BACKUP_STORAGE}"
   echo "  GENERATE_TLS=${GENERATE_TLS}"
 
-  write_rhbk_subscription_patch
-  write_crunchy_subscription_patch
-  write_postgres_patch
-  write_keycloak_patch
-  write_rhbk_kustomization
-  write_crunchy_instance_kustomization
-  write_keycloak_instance_kustomization
-
-  if [[ "${GENERATE_TLS}" == "true" ]]; then
-    generate_keycloak_tls
-  else
-    echo "Skipping TLS generation (GENERATE_TLS=false)"
-  fi
+  local overlay
+  for overlay in ${KEYCLOAK_OVERLAYS}; do
+    configure_keycloak_overlay "${overlay}"
+  done
 }
 
 # =============================================================================
@@ -673,7 +743,7 @@ main() {
     configure_keycloak_overlays
   else
     echo
-    echo "KEYCLOAK_ENABLED=false — skipping keycloak/*/overlays/lab patches"
+    echo "KEYCLOAK_ENABLED=false — skipping keycloak/*/overlays patches"
   fi
 
   echo
