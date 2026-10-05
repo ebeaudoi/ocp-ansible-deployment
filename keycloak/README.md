@@ -7,6 +7,7 @@ Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize an
 ```text
 keycloak/
 ├── configure-overlays.sh           # HEADER → rewrite lab + update overlays + Git TLS
+├── collect-git-ca.sh               # Fetch Git HTTPS CA/self-signed cert → argoCD/git-ca.crt
 ├── argoCD/                         # AppProject, Applications, git-repository-secret
 ├── deploy-keycloak.sh              # Ordered oc apply -k (lab or update)
 ├── crunchy/
@@ -106,20 +107,33 @@ Keycloak children live in the default **`openshift-gitops`** Argo CD instance, u
 
 ### Self-signed Git TLS
 
-If Argo CD fails with `tls: failed to verify certificate: x509: certificate signed by unknown authority`, configure Git in [`configure-overlays.sh`](configure-overlays.sh) **HEADER** (`GIT_*`), then re-run the script and apply the Secret before Applications:
+If Argo CD fails with `tls: failed to verify certificate: x509: certificate signed by unknown authority`:
+
+**1. Collect the Git server CA** with [`collect-git-ca.sh`](collect-git-ca.sh) (uses `openssl s_client`; prefers issuer/CA, else the leaf if self-signed):
+
+```bash
+# From repo root — default output: keycloak/argoCD/git-ca.crt
+./keycloak/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
+
+# Host or host:port
+./keycloak/collect-git-ca.sh git.example.com
+./keycloak/collect-git-ca.sh git.example.com:8443 -o keycloak/argoCD/git-ca.crt
+```
+
+**2. Configure Git** in [`configure-overlays.sh`](configure-overlays.sh) **HEADER** (`GIT_*`), then re-run and deploy:
 
 | Mode | HEADER | What it does |
 |------|--------|--------------|
 | Lab (skip verify) | `GIT_TLS_INSECURE=true` | Writes `argoCD/git-repository-secret.yaml` with `insecure: "true"` |
-| Trust CA | `GIT_TLS_INSECURE=false`, set `GIT_CA_FILE=/path/to/ca.pem`, `GIT_APPLY_CA_TO_CLUSTER=true` | Patches `argocd-tls-certs-cm` for the Git hostname and restarts repo-server |
+| Trust CA | `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=keycloak/argoCD/git-ca.crt`, `GIT_APPLY_CA_TO_CLUSTER=true` | Patches `argocd-tls-certs-cm` for the Git hostname and restarts repo-server |
 
 Also set `GIT_REPO_URL` (and optional `GIT_USERNAME` / `GIT_PASSWORD`) so Application `repoURL`, AppProject `sourceRepos`, and the repository Secret match your Git server.
 
 ```bash
-# 1) Edit GIT_* in keycloak/configure-overlays.sh
+# Edit GIT_* in keycloak/configure-overlays.sh, then:
 ./keycloak/configure-overlays.sh
 
-# 2) Apply repo Secret (playbooks do this first), then Applications
+# Apply repo Secret (playbooks do this first), then Applications
 oc apply -f keycloak/argoCD/git-repository-secret.yaml
 ansible-playbook deploy-gitops-keycload.yaml
 ```

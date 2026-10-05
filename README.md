@@ -34,7 +34,7 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
   - [Encode Loki S3 Secret values](#encode-loki-s3-secret-values)
   - [Update Loki TLS CA bundle (HTTPS endpoints)](#update-loki-tls-ca-bundle-https-endpoints)
 - [Loki node placement (taints)](#loki-node-placement-taints)
-- [Keycloak Git with self-signed TLS](#keycloak-git-with-self-signed-tls)
+- [Keycloak Git with self-signed TLS](#keycloak-git-with-self-signed-tls) (includes `collect-git-ca.sh`)
 - [Run the deployment](#run-the-deployment)
 - [Troubleshooting](#troubleshooting)
 
@@ -80,7 +80,7 @@ Parent manifests: [`gitops/app-of-apps/`](gitops/app-of-apps/). Child manifests:
 
 1. Creates namespace `openshift-gitops-operator`
 2. Creates an OperatorGroup
-3. Creates a Subscription for `openshift-gitops-operator` (channel from `gitopschannel`, default `gitops-1.21`, manual InstallPlan approval)
+3. Creates a Subscription for `openshift-gitops-operator` (channel from `gitops_channel`, default `gitops-1.21`, manual InstallPlan approval)
 4. Waits for and approves the InstallPlan
 5. Waits for the Argo CD CRD and the default `openshift-gitops` ArgoCD instance
 
@@ -129,16 +129,29 @@ The playbook then creates AppProject `appkeycloak` and Applications from `keyclo
 
 ### Important playbook variables
 
+Edit the play `vars:` block in `deploy-gitops.yaml` / `deploy-gitops-keycload.yaml` (or override with `-e`).
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `kubeconfig_path` | `ocpkubeconfig` | Cluster kubeconfig |
-| `gitopschannel` | `gitops-1.21` | GitOps operator channel |
-| `repo_root` | `playbook_dir` | Path to Application YAML files |
+| `verify_ssl` | `false` | TLS verify for kubernetes.core modules |
+| `repo_root` | `playbook_dir` | Repo root for Application YAML paths |
+| `gitops_channel` | `gitops-1.21` | GitOps operator channel (`gitopschannel` alias kept) |
+| `gitops_catalog_source` | `redhat-operators` | OLM catalog for GitOps Subscription |
+| `gitops_catalog_namespace` | `openshift-marketplace` | Catalog namespace |
+| `gitops_install_plan_approval` | `Manual` | InstallPlan approval mode |
+| `gitops_operator_namespace` | `openshift-gitops-operator` | GitOps operator namespace |
+| `argocd_namespace` / `argocd_name` | `openshift-gitops` | Default Argo CD instance |
+| `*_app_manifest` / `*_appproject_manifest` | under `logging/argoCD` or `keycloak/argoCD` | Manifest paths to apply |
 
 Run it:
 
 ```bash
 ansible-playbook deploy-gitops.yaml
+# Keycloak-only GitOps path:
+ansible-playbook deploy-gitops-keycload.yaml
+# Example override:
+ansible-playbook deploy-gitops.yaml -e gitops_channel=gitops-1.22
 ```
 
 ---
@@ -244,7 +257,7 @@ Before the first sync, update catalog/channel values in:
 - `logging/operator/base/subscription.yaml`
 - `logging/loki/base/subscription.yaml`
 - `logging/coo/base/coo-operator.yaml`
-- GitOps Subscription in `deploy-gitops.yaml` (`gitopschannel`, `source`)
+- GitOps Subscription in `deploy-gitops.yaml` (`gitops_channel`, `gitops_catalog_source`)
 
 ```bash
 oc get catalogsource -n openshift-marketplace
@@ -375,12 +388,22 @@ oc get nodes -l node-role.kubernetes.io/infra \
 
 ## Keycloak Git with self-signed TLS
 
-If Argo CD cannot fetch the Keycloak repo (`x509: certificate signed by unknown authority`), configure Git in [`keycloak/configure-overlays.sh`](keycloak/configure-overlays.sh):
+If Argo CD cannot fetch the Keycloak repo (`x509: certificate signed by unknown authority`), configure Git in [`keycloak/configure-overlays.sh`](keycloak/configure-overlays.sh).
 
-1. Set `GIT_REPO_URL` to your Git HTTPS URL.
-2. For a lab self-signed server, leave `GIT_TLS_INSECURE=true` (writes `keycloak/argoCD/git-repository-secret.yaml` with `insecure: "true"`).
-3. To trust a CA instead: `GIT_TLS_INSECURE=false`, set `GIT_CA_FILE` to the PEM, and `GIT_APPLY_CA_TO_CLUSTER=true`.
-4. Run `./keycloak/configure-overlays.sh`, then deploy (`deploy-gitops-keycload.yaml` applies the Git Secret before Applications).
+**Collect the Git CA** (issuer preferred; leaf if the cert is self-signed):
+
+```bash
+# From repo root — writes keycloak/argoCD/git-ca.crt by default
+./keycloak/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
+
+# Or host / host:port, custom output path
+./keycloak/collect-git-ca.sh git.example.com:8443 -o keycloak/argoCD/git-ca.crt
+```
+
+Then either:
+
+1. **Lab (skip verify):** set `GIT_TLS_INSECURE=true` in `keycloak/configure-overlays.sh`.
+2. **Trust CA:** set `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=keycloak/argoCD/git-ca.crt`, `GIT_APPLY_CA_TO_CLUSTER=true`, set `GIT_REPO_URL`, run `./keycloak/configure-overlays.sh`, then `ansible-playbook deploy-gitops-keycload.yaml`.
 
 Details: [`keycloak/README.md`](keycloak/README.md#self-signed-git-tls).
 
