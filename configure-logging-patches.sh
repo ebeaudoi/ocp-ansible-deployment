@@ -13,13 +13,15 @@
 #      - access_key_id, access_key_secret, bucketnames, endpoint, forcepathstyle
 #   2) logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml
 #      - schema effectiveDate/version, S3 secret ref, tls.caName, storageClassName
-#   3) logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml
+#   3) logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml
+#      - nodeSelector + tolerations for LokiStack components on infra nodes
+#   4) logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml
 #      - service-ca.crt (fetched when S4 is deployed on the cluster)
 #
 # Related S4 patches (outside logging/, still driven by this script when
 # S4_ENABLED=true):
-#   4) s4/overlays/lab/s4-route-s3-patch.yaml  (spec.host)
-#   5) s4/overlays/lab/s4-secret-patch.yaml    (AWS_* + UI_*)
+#   5) s4/overlays/lab/s4-route-s3-patch.yaml  (spec.host)
+#   6) s4/overlays/lab/s4-secret-patch.yaml    (AWS_* + UI_*)
 #
 # Note: logging/coo/base/coo-uiplugin-patcher*.yaml are ClusterRole(Binding)
 # resources named "patcher", not kustomize overlay patches — not managed here.
@@ -70,6 +72,16 @@ LOKI_S3_SECRET_NAME="logging-loki-s3"
 LOKI_S3_SECRET_TYPE="s3"
 LOKI_TLS_CA_NAME="loki-s3-ca-bundle"
 
+# --- LokiStack infra placement patch
+# (logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml) ---
+# Applied to every LokiStack template component (compactor, distributor,
+# gateway, indexGateway, ingester, querier, queryFrontend, ruler).
+LOKI_NODE_SELECTOR_KEY="node-role.kubernetes.io/infra"
+LOKI_NODE_SELECTOR_VALUE=""
+LOKI_TOLERATION_KEY="workload"
+LOKI_TOLERATION_VALUE="loki"
+LOKI_TOLERATION_EFFECT="NoSchedule"
+
 # --- Loki TLS CA bundle patch
 # (logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml) ---
 # Populated automatically when S4_ENABLED=true and S4_DEPLOYED_ON_CLUSTER=true.
@@ -88,6 +100,7 @@ S4_ROUTE_PATCH="${REPO_ROOT}/s4/overlays/lab/s4-route-s3-patch.yaml"
 S4_SECRET_PATCH="${REPO_ROOT}/s4/overlays/lab/s4-secret-patch.yaml"
 LOKI_STORAGE_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml"
 LOKI_CR_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml"
+LOKI_PLACEMENT_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml"
 LOKI_CA_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml"
 
 # =============================================================================
@@ -121,6 +134,10 @@ resolve_loki_s3_params() {
   : "${LOKI_S3_SECRET_NAME:?LOKI_S3_SECRET_NAME is required}"
   : "${LOKI_S3_SECRET_TYPE:?LOKI_S3_SECRET_TYPE is required}"
   : "${LOKI_TLS_CA_NAME:?LOKI_TLS_CA_NAME is required}"
+  : "${LOKI_NODE_SELECTOR_KEY:?LOKI_NODE_SELECTOR_KEY is required}"
+  : "${LOKI_TOLERATION_KEY:?LOKI_TOLERATION_KEY is required}"
+  : "${LOKI_TOLERATION_VALUE:?LOKI_TOLERATION_VALUE is required}"
+  : "${LOKI_TOLERATION_EFFECT:?LOKI_TOLERATION_EFFECT is required}"
 }
 
 write_s4_route_patch() {
@@ -200,6 +217,77 @@ spec:
   storageClassName: ${LOKI_STORAGE_CLASS}
 EOF
   echo "Updated ${LOKI_CR_PATCH}"
+}
+
+write_loki_placement_patch() {
+  cat > "${LOKI_PLACEMENT_PATCH}" <<EOF
+# Overrides LokiStack infra node placement from logging/loki/instance/base/03-loki-cr.yaml.
+# Edit this file, or regenerate it from HEADER values in configure-logging-patches.sh.
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: logging-loki
+  namespace: openshift-logging
+spec:
+  template:
+    compactor:
+      nodeSelector:
+        ${LOKI_NODE_SELECTOR_KEY}: "${LOKI_NODE_SELECTOR_VALUE}"
+      tolerations:
+        - effect: ${LOKI_TOLERATION_EFFECT}
+          key: ${LOKI_TOLERATION_KEY}
+          value: ${LOKI_TOLERATION_VALUE}
+    distributor:
+      nodeSelector:
+        ${LOKI_NODE_SELECTOR_KEY}: "${LOKI_NODE_SELECTOR_VALUE}"
+      tolerations:
+        - effect: ${LOKI_TOLERATION_EFFECT}
+          key: ${LOKI_TOLERATION_KEY}
+          value: ${LOKI_TOLERATION_VALUE}
+    gateway:
+      nodeSelector:
+        ${LOKI_NODE_SELECTOR_KEY}: "${LOKI_NODE_SELECTOR_VALUE}"
+      tolerations:
+        - effect: ${LOKI_TOLERATION_EFFECT}
+          key: ${LOKI_TOLERATION_KEY}
+          value: ${LOKI_TOLERATION_VALUE}
+    indexGateway:
+      nodeSelector:
+        ${LOKI_NODE_SELECTOR_KEY}: "${LOKI_NODE_SELECTOR_VALUE}"
+      tolerations:
+        - effect: ${LOKI_TOLERATION_EFFECT}
+          key: ${LOKI_TOLERATION_KEY}
+          value: ${LOKI_TOLERATION_VALUE}
+    ingester:
+      nodeSelector:
+        ${LOKI_NODE_SELECTOR_KEY}: "${LOKI_NODE_SELECTOR_VALUE}"
+      tolerations:
+        - effect: ${LOKI_TOLERATION_EFFECT}
+          key: ${LOKI_TOLERATION_KEY}
+          value: ${LOKI_TOLERATION_VALUE}
+    querier:
+      nodeSelector:
+        ${LOKI_NODE_SELECTOR_KEY}: "${LOKI_NODE_SELECTOR_VALUE}"
+      tolerations:
+        - effect: ${LOKI_TOLERATION_EFFECT}
+          key: ${LOKI_TOLERATION_KEY}
+          value: ${LOKI_TOLERATION_VALUE}
+    queryFrontend:
+      nodeSelector:
+        ${LOKI_NODE_SELECTOR_KEY}: "${LOKI_NODE_SELECTOR_VALUE}"
+      tolerations:
+        - effect: ${LOKI_TOLERATION_EFFECT}
+          key: ${LOKI_TOLERATION_KEY}
+          value: ${LOKI_TOLERATION_VALUE}
+    ruler:
+      nodeSelector:
+        ${LOKI_NODE_SELECTOR_KEY}: "${LOKI_NODE_SELECTOR_VALUE}"
+      tolerations:
+        - effect: ${LOKI_TOLERATION_EFFECT}
+          key: ${LOKI_TOLERATION_KEY}
+          value: ${LOKI_TOLERATION_VALUE}
+EOF
+  echo "Updated ${LOKI_PLACEMENT_PATCH}"
 }
 
 fetch_s4_ca_pem() {
@@ -302,6 +390,8 @@ main() {
   echo "  LOKI_S3_ENDPOINT=${LOKI_S3_ENDPOINT}"
   echo "  LOKI_S3_BUCKET=${LOKI_S3_BUCKET}"
   echo "  LOKI_STORAGE_CLASS=${LOKI_STORAGE_CLASS}"
+  echo "  LOKI_NODE_SELECTOR=${LOKI_NODE_SELECTOR_KEY}=${LOKI_NODE_SELECTOR_VALUE}"
+  echo "  LOKI_TOLERATION=${LOKI_TOLERATION_KEY}=${LOKI_TOLERATION_VALUE}:${LOKI_TOLERATION_EFFECT}"
 
   if [[ "${S4_ENABLED}" == "true" ]]; then
     write_s4_route_patch
@@ -312,6 +402,7 @@ main() {
 
   write_loki_storage_patch
   write_loki_cr_patch
+  write_loki_placement_patch
 
   if [[ "${S4_ENABLED}" == "true" && "${S4_DEPLOYED_ON_CLUSTER}" == "true" ]]; then
     write_loki_ca_bundle_patch

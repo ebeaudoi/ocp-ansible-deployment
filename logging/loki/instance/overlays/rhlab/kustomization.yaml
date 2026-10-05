@@ -11,6 +11,12 @@ patches:
       version: v1
       kind: LokiStack
       name: logging-loki
+  - path: lokistack-placement-patch.yaml
+    target:
+      group: loki.grafana.com
+      version: v1
+      kind: LokiStack
+      name: logging-loki
   - path: lokistack-storage-patch.yaml
     target:
       version: v1

@@ -1,0 +1,65 @@
+# Overrides LokiStack infra node placement from logging/loki/instance/base/03-loki-cr.yaml.
+# Edit this file, or regenerate it from HEADER values in configure-logging-patches.sh.
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: logging-loki
+  namespace: openshift-logging
+spec:
+  template:
+    compactor:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+        - effect: NoSchedule
+          key: workload
+          value: loki
+    distributor:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+        - effect: NoSchedule
+          key: workload
+          value: loki
+    gateway:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+        - effect: NoSchedule
+          key: workload
+          value: loki
+    indexGateway:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+        - effect: NoSchedule
+          key: workload
+          value: loki
+    ingester:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+        - effect: NoSchedule
+          key: workload
+          value: loki
+    querier:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+        - effect: NoSchedule
+          key: workload
+          value: loki
+    queryFrontend:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+        - effect: NoSchedule
+          key: workload
+          value: loki
+    ruler:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+        - effect: NoSchedule
+          key: workload
+          value: loki

@@ -12,6 +12,31 @@ A separate playbook deploys [S4](https://github.com/rh-aiservices-bu/s4) (S3-com
 
 Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` collection.
 
+## Index
+
+- [Architecture overview](#architecture-overview)
+- [What `deploy-gitops.yaml` does](#what-deploy-gitopsyaml-does)
+  - [Phase 1 — Install OpenShift GitOps](#phase-1--install-openshift-gitops)
+  - [Phase 2 — App-of-Apps (parent Applications)](#phase-2--app-of-apps-parent-applications)
+  - [Phase 3 — Create logging Argo CD Applications (Ansible)](#phase-3--create-logging-argo-cd-applications-ansible)
+  - [Phase 4 — Create Keycloak Argo CD Applications (Ansible)](#phase-4--create-keycloak-argo-cd-applications-ansible)
+  - [Important playbook variables](#important-playbook-variables)
+- [Prerequisites](#prerequisites)
+  - [1. Install Ansible](#1-install-ansible)
+  - [2. Install `kubernetes.core`](#2-install-kubernetescore)
+  - [3. Install the Python `kubernetes` client (pip)](#3-install-the-python-kubernetes-client-pip)
+  - [4. Cluster kubeconfig and `oc`](#4-cluster-kubeconfig-and-oc)
+  - [5. Align operator Subscriptions with your cluster](#5-align-operator-subscriptions-with-your-cluster)
+- [Object storage (S4) for Loki](#object-storage-s4-for-loki)
+  - [Layout](#layout)
+  - [Lab overlay patches](#lab-overlay-patches)
+  - [Deploy S4 and create the `loggingstack` bucket](#deploy-s4-and-create-the-loggingstack-bucket)
+  - [Encode Loki S3 Secret values](#encode-loki-s3-secret-values)
+  - [Update Loki TLS CA bundle (HTTPS endpoints)](#update-loki-tls-ca-bundle-https-endpoints)
+- [Loki node placement (taints)](#loki-node-placement-taints)
+- [Run the deployment](#run-the-deployment)
+- [Troubleshooting](#troubleshooting)
+
 ---
 
 ## Architecture overview
@@ -230,6 +255,7 @@ Manual patch files:
 - `s4/overlays/lab/s4-secret-patch.yaml` — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `UI_USERNAME`, `UI_PASSWORD`
 - `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml` — base64 S3 secret fields
 - `logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml` — `storageClassName` / schema
+- `logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml` — infra `nodeSelector` and taint `tolerations`
 
 ### Deploy S4 and create the `loggingstack` bucket
 
@@ -299,7 +325,7 @@ Example for this lab: `thin-csi` in `logging/loki/instance/overlays/rhlab/lokist
 
 ## Loki node placement (taints)
 
-LokiStack in `logging/loki/instance/base/03-loki-cr.yaml` runs on infra nodes with a Loki taint. Pods stay `Pending` until nodes match.
+LokiStack defaults in `logging/loki/instance/base/03-loki-cr.yaml` pin every component to infra nodes with a Loki taint. Override that per environment in `logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml` (or set `LOKI_NODE_SELECTOR_*` / `LOKI_TOLERATION_*` in `configure-logging-patches.sh` and re-run the script). Pods stay `Pending` until nodes match.
 
 - Label: `node-role.kubernetes.io/infra=`
 - Taint: `workload=loki:NoSchedule`
