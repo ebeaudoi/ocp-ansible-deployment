@@ -240,11 +240,12 @@ Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiser
 Before deploying, set lab-specific values either by editing the patch files directly, or with the helper script:
 
 ```bash
-# 1. Edit HEADER parameters in configure-logging-patches.sh
-#    - S4_ENABLED / S4_DEPLOYED_ON_CLUSTER
-#    - S4 host, credentials, Loki bucket/endpoint/storageClass
+# 1. Edit HEADER parameters in configure-overlays.sh
+#    - S4_ENABLED / S4_DEPLOYED_ON_CLUSTER / KEYCLOAK_ENABLED
+#    - S4 host, credentials, Loki bucket/endpoint/storageClass/placement
+#    - Keycloak hostname, namespace, RHBK/Crunchy/Postgres settings
 # 2. Run:
-./configure-logging-patches.sh
+./configure-overlays.sh
 ```
 
 When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script also refreshes `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
@@ -325,7 +326,7 @@ Example for this lab: `thin-csi` in `logging/loki/instance/overlays/rhlab/lokist
 
 ## Loki node placement (taints)
 
-LokiStack defaults in `logging/loki/instance/base/03-loki-cr.yaml` pin every component to infra nodes with a Loki taint. Override that per environment in `logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml` (or set `LOKI_NODE_SELECTOR_*` / `LOKI_TOLERATION_*` in `configure-logging-patches.sh` and re-run the script). Pods stay `Pending` until nodes match.
+LokiStack defaults in `logging/loki/instance/base/03-loki-cr.yaml` pin every component to infra nodes with a Loki taint. Override that per environment in `logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml` (or set `LOKI_NODE_SELECTOR_*` / `LOKI_TOLERATION_*` in `configure-overlays.sh` and re-run the script). Pods stay `Pending` until nodes match.
 
 - Label: `node-role.kubernetes.io/infra=`
 - Taint: `workload=loki:NoSchedule`

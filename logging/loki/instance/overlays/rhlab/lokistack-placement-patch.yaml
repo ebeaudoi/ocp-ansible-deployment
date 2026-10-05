@@ -1,5 +1,5 @@
 # Overrides LokiStack infra node placement from logging/loki/instance/base/03-loki-cr.yaml.
-# Edit this file, or regenerate it from HEADER values in configure-logging-patches.sh.
+# Edit this file, or regenerate it from HEADER values in configure-overlays.sh.
 apiVersion: loki.grafana.com/v1
 kind: LokiStack
 metadata:
@@ -12,54 +12,54 @@ spec:
         node-role.kubernetes.io/infra: ""
       tolerations:
         - effect: NoSchedule
-          key: workload
-          value: loki
+          key: node-role.kubernetes.io/infra
+          operator: Exists
     distributor:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
       tolerations:
         - effect: NoSchedule
-          key: workload
-          value: loki
+          key: node-role.kubernetes.io/infra
+          operator: Exists
     gateway:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
       tolerations:
         - effect: NoSchedule
-          key: workload
-          value: loki
+          key: node-role.kubernetes.io/infra
+          operator: Exists
     indexGateway:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
       tolerations:
         - effect: NoSchedule
-          key: workload
-          value: loki
+          key: node-role.kubernetes.io/infra
+          operator: Exists
     ingester:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
       tolerations:
         - effect: NoSchedule
-          key: workload
-          value: loki
+          key: node-role.kubernetes.io/infra
+          operator: Exists
     querier:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
       tolerations:
         - effect: NoSchedule
-          key: workload
-          value: loki
+          key: node-role.kubernetes.io/infra
+          operator: Exists
     queryFrontend:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
       tolerations:
         - effect: NoSchedule
-          key: workload
-          value: loki
+          key: node-role.kubernetes.io/infra
+          operator: Exists
     ruler:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
       tolerations:
         - effect: NoSchedule
-          key: workload
-          value: loki
+          key: node-role.kubernetes.io/infra
+          operator: Exists

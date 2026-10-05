@@ -6,7 +6,6 @@ Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize an
 
 ```text
 keycloak/
-├── configure-keycloak-patches.sh   # Edit header params → rewrite lab overlays
 ├── argoCD/                         # AppProject appkeycloak + child Applications
 ├── crunchy/
 │   ├── operator/                   # Crunchy Postgres Operator (OLM)
@@ -36,13 +35,13 @@ All application components run in namespace **`keycloak`**. The Crunchy operator
 
 ## Lab customization (before deploy)
 
-Edit the **HEADER** in [`configure-keycloak-patches.sh`](configure-keycloak-patches.sh), then run:
+Edit the Keycloak **HEADER** parameters in [`../configure-overlays.sh`](../configure-overlays.sh), then run from the repo root:
 
 ```bash
-./keycloak/configure-keycloak-patches.sh
+./configure-overlays.sh
 ```
 
-That rewrites the lab overlay patches (and regenerates TLS when `GENERATE_TLS=true`):
+Set `KEYCLOAK_ENABLED=true` (default). That rewrites the lab overlay patches (and regenerates TLS when `GENERATE_TLS=true`):
 
 | Parameter | Overlay file |
 |-----------|--------------|
