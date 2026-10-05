@@ -158,8 +158,8 @@ ansible --version
 **Online:**
 
 ```bash
-mkdir -p collections
-ansible-galaxy collection install kubernetes.core -p collections
+sudo ansible-galaxy collection install kubernetes.core \
+  -p /usr/share/ansible/collections
 ```
 
 **Offline:**
@@ -170,17 +170,16 @@ mkdir -p offline-bundle/collections
 ansible-galaxy collection download kubernetes.core -p offline-bundle/collections
 
 # On the bastion
-mkdir -p collections
-ansible-galaxy collection install \
+sudo ansible-galaxy collection install \
   offline-bundle/collections/kubernetes-core-*.tar.gz \
-  -p collections --offline
+  -p /usr/share/ansible/collections --offline
 ```
 
 In `ansible.cfg`:
 
 ```ini
 [defaults]
-COLLECTIONS_PATHS = ./collections
+collections_path = /usr/share/ansible/collections
 inventory = ./hosts
 ```
 
@@ -190,7 +189,9 @@ ansible-galaxy collection list
 
 ### 3. Install the Python `kubernetes` client (pip)
 
-RHEL 10 has no `python3-kubernetes` RPM.
+The Ansible collection `kubernetes.core` is only the module code. At runtime, modules such as `kubernetes.core.k8s` and `kubernetes.core.k8s_info` (used by `deploy-gitops.yaml` and `deploy-s4.yaml`) import the official Python **kubernetes** client to talk to the OpenShift API. Without that library, playbooks fail with `Failed to import ... kubernetes` even when the collection is installed.
+
+RHEL 10 has no `python3-kubernetes` RPM, so install it with pip:
 
 ```bash
 python3 -m pip install --user kubernetes
