@@ -160,3 +160,40 @@
         kubeconfig: "{{ kubeconfig_path }}"
         src: "{{ repo_root }}/logging/argoCD/logginginstance-app-argo.yaml"
         state: present
+
+    # --- Keycloak Argo CD project + Applications ---
+
+    # Create AppProject appkeycloak for all Keycloak Applications
+    - name: Deploy appkeycloak AppProject
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        src: "{{ repo_root }}/keycloak/argoCD/appkeycloak-project.yaml"
+        state: present
+
+    # Register the Crunchy Postgres operator Application under project appkeycloak
+    - name: Deploy crunchy operator
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        src: "{{ repo_root }}/keycloak/argoCD/crunchy-operator-app-argo.yaml"
+        state: present
+
+    # Register the RHBK operator Application under project appkeycloak
+    - name: Deploy rhbk operator
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        src: "{{ repo_root }}/keycloak/argoCD/rhbk-operator-app-argo.yaml"
+        state: present
+
+    # Register the PostgresCluster Application under project appkeycloak
+    - name: Deploy keycloak postgres instance
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        src: "{{ repo_root }}/keycloak/argoCD/crunchy-instance-app-argo.yaml"
+        state: present
+
+    # Register the Keycloak CR + TLS Application under project appkeycloak
+    - name: Deploy keycloak instance
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        src: "{{ repo_root }}/keycloak/argoCD/keycloak-instance-app-argo.yaml"
+        state: present

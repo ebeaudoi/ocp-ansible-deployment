@@ -6,6 +6,7 @@ Deploy OpenShift GitOps (Argo CD), then use Argo CD Applications to install:
 - Loki operator + LokiStack instance
 - Cluster Observability Operator (COO) + Logging UIPlugin
 - ClusterLogForwarder (logging instance)
+- Keycloak (RHBK + Crunchy Postgres)
 
 A separate playbook deploys [S4](https://github.com/rh-aiservices-bu/s4) (S3-compatible object storage) and creates the Loki bucket.
 
@@ -19,13 +20,29 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
 deploy-gitops.yaml
   ├── OpenShift GitOps operator
   ├── default Argo CD (openshift-gitops)
-  └── logging Applications (operator, Loki, COO, CLF)
+  ├── App-of-Apps
+  │     ├── AppProject cluster-config
+  │     └── Application cluster-apps
+  │           ├── logging-apps  → logging/argoCD (applogging + children)
+  │           └── keycloak-apps → keycloak/argoCD (appkeycloak + children)
+  ├── logging Applications (operator, Loki, COO, CLF)     # still applied by Ansible
+  └── keycloak Applications (Crunchy, RHBK, Postgres, Keycloak)
 
 deploy-s4.yaml
   └── S4 (s4/overlays/lab) + loggingstack bucket
 ```
 
-Logging Applications live in the default **`openshift-gitops`** Argo CD instance, under AppProject **`applogging`**.
+Everything runs in the default **`openshift-gitops`** Argo CD instance.
+
+| Layer | AppProject | What it owns |
+|-------|------------|--------------|
+| App-of-Apps parents | `cluster-config` | Applications `cluster-apps`, `logging-apps`, `keycloak-apps` |
+| Logging children | `applogging` | Logging operator, Loki, COO, ClusterLogForwarder |
+| Keycloak children | `appkeycloak` | Crunchy operator, RHBK operator, PostgresCluster, Keycloak |
+
+`deploy-gitops.yaml` still applies the child AppProjects and Applications (the original Ansible path). It also bootstraps the App-of-Apps root. Both paths create the same child objects and are idempotent.
+
+Parent manifests: [`gitops/app-of-apps/`](gitops/app-of-apps/). Child manifests: [`logging/argoCD/`](logging/argoCD/) and [`keycloak/argoCD/`](keycloak/argoCD/). See also [`keycloak/README.md`](keycloak/README.md).
 
 ---
 
@@ -41,7 +58,23 @@ Logging Applications live in the default **`openshift-gitops`** Argo CD instance
 4. Waits for and approves the InstallPlan
 5. Waits for the Argo CD CRD and the default `openshift-gitops` ArgoCD instance
 
-### Phase 2 — Create logging Argo CD Applications
+### Phase 2 — App-of-Apps (parent Applications)
+
+After GitOps is ready, the playbook applies AppProject `cluster-config` and root Application `cluster-apps` from `gitops/app-of-apps/`.
+
+| Ansible task | File | What Argo CD deploys |
+|--------------|------|----------------------|
+| Deploy cluster-config AppProject | `gitops/app-of-apps/cluster-config-project.yaml` | AppProject `cluster-config` |
+| Deploy cluster-apps | `gitops/app-of-apps/cluster-apps.yaml` | Root app; syncs `logging-apps` and `keycloak-apps` |
+
+`cluster-apps` source path is `gitops/app-of-apps` (kustomize). That directory lists `cluster-config-project.yaml`, `logging-apps.yaml`, and `keycloak-apps.yaml`. It does **not** list `cluster-apps.yaml`, so the root does not manage itself.
+
+| Parent Application | Source path | Creates |
+|--------------------|-------------|---------|
+| `logging-apps` | `logging/argoCD` | AppProject `applogging` + logging child Applications |
+| `keycloak-apps` | `keycloak/argoCD` | AppProject `appkeycloak` + Keycloak child Applications |
+
+### Phase 3 — Create logging Argo CD Applications (Ansible)
 
 After GitOps is ready, the playbook creates AppProject `applogging`, then applies Application manifests from `logging/argoCD/`.  
 Those Applications are created in **`openshift-gitops`** with `project: applogging`. Argo CD then syncs each app from this Git repo:
@@ -54,7 +87,19 @@ Those Applications are created in **`openshift-gitops`** with `project: apploggi
 | Deploy coo | `logging/argoCD/coo-app-argo.yaml` | COO + Logging UIPlugin (`logging/coo/base`) |
 | Deploy logging instance | `logging/argoCD/logginginstance-app-argo.yaml` | ClusterLogForwarder + RBAC (`logging/instance/base`) |
 
-Ansible does **not** apply the logging/Loki manifests directly. It only creates the Argo CD Applications; Argo CD pulls and syncs from Git.
+Ansible does **not** apply the logging/Loki **workload** manifests directly. It creates the Argo CD Applications (and the App-of-Apps parents also sync those same Application YAMLs from Git).
+
+### Phase 4 — Create Keycloak Argo CD Applications (Ansible)
+
+The playbook then creates AppProject `appkeycloak` and Applications from `keycloak/argoCD/` (also in **`openshift-gitops`**). See [`keycloak/README.md`](keycloak/README.md).
+
+| Ansible task | Application file | What Argo CD deploys |
+|--------------|------------------|----------------------|
+| Deploy appkeycloak AppProject | `keycloak/argoCD/appkeycloak-project.yaml` | AppProject `appkeycloak` |
+| Deploy crunchy operator | `keycloak/argoCD/crunchy-operator-app-argo.yaml` | Crunchy operator (`keycloak/crunchy/operator/overlays/lab`) |
+| Deploy rhbk operator | `keycloak/argoCD/rhbk-operator-app-argo.yaml` | RHBK operator (`keycloak/operator/overlays/lab`) |
+| Deploy keycloak postgres instance | `keycloak/argoCD/crunchy-instance-app-argo.yaml` | PostgresCluster (`keycloak/crunchy/instance/overlays/lab`) |
+| Deploy keycloak instance | `keycloak/argoCD/keycloak-instance-app-argo.yaml` | Keycloak CR + TLS (`keycloak/instance/overlays/lab`) |
 
 ### Important playbook variables
 

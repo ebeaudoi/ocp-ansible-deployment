@@ -7,6 +7,7 @@ Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize an
 ```text
 keycloak/
 ├── configure-keycloak-patches.sh   # Edit header params → rewrite lab overlays
+├── argoCD/                         # AppProject appkeycloak + child Applications
 ├── crunchy/
 │   ├── operator/                   # Crunchy Postgres Operator (OLM)
 │   │   ├── base/
@@ -58,7 +59,44 @@ Or regenerate TLS alone:
 ./keycloak/instance/overlays/lab/generate-tls.sh keycloak.apps.<cluster-domain>
 ```
 
-## Deploy
+## GitOps (preferred)
+
+Keycloak children live in the default **`openshift-gitops`** Argo CD instance, under AppProject **`appkeycloak`**.
+
+Two equivalent ways to register them (both are idempotent):
+
+1. **App-of-Apps** — parent Application `keycloak-apps` (`gitops/app-of-apps/keycloak-apps.yaml`, project `cluster-config`) syncs `keycloak/argoCD` (AppProject + children). The root Application `cluster-apps` syncs `keycloak-apps` and `logging-apps`.
+2. **Ansible** — `deploy-gitops.yaml` still applies `keycloak/argoCD/*.yaml` directly.
+
+Child Applications (sync waves keep operator CRs after operators):
+
+| Application | Path | Sync wave |
+|-------------|------|-----------|
+| `crunchy-operator` | `keycloak/crunchy/operator/overlays/lab` | 0 |
+| `rhbk-operator` | `keycloak/operator/overlays/lab` | 1 |
+| `keycloak-postgres` | `keycloak/crunchy/instance/overlays/lab` | 2 |
+| `keycloak` | `keycloak/instance/overlays/lab` | 3 |
+
+Instance apps use `SkipDryRunOnMissingResource` so they can retry until operator CRDs exist.
+
+```bash
+ansible-playbook deploy-gitops.yaml
+```
+
+That playbook installs GitOps, applies App-of-Apps (`cluster-config` + `cluster-apps`), and still applies the Keycloak child Applications.
+
+Or apply GitOps objects only:
+
+```bash
+# App-of-Apps (creates keycloak-apps, which syncs keycloak/argoCD)
+oc apply -f gitops/app-of-apps/cluster-config-project.yaml
+oc apply -f gitops/app-of-apps/cluster-apps.yaml
+
+# Direct child Applications (Ansible path)
+oc apply -k keycloak/argoCD
+```
+
+## Manual deploy
 
 Apply from the **repo root** in this order. Operators must be ready (CRDs established) before their CRs, and Postgres must create the DB user Secret before Keycloak starts.
 

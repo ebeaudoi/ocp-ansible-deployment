@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: appkeycloak
+  namespace: openshift-gitops
+spec:
+  description: Keycloak stack (Crunchy operator, RHBK operator, PostgresCluster, Keycloak)
+  sourceRepos:
+    - https://github.com/ebeaudoi/ocp-ansible-deployment.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: keycloak
+    - server: https://kubernetes.default.svc
+      namespace: crunchy-operator
+    - server: https://kubernetes.default.svc
+      namespace: openshift-gitops
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
