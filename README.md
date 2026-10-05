@@ -191,12 +191,37 @@ ansible-galaxy collection list
 
 The Ansible collection `kubernetes.core` is only the module code. At runtime, modules such as `kubernetes.core.k8s` and `kubernetes.core.k8s_info` (used by `deploy-gitops.yaml` and `deploy-s4.yaml`) import the official Python **kubernetes** client to talk to the OpenShift API. Without that library, playbooks fail with `Failed to import ... kubernetes` even when the collection is installed.
 
-RHEL 10 has no `python3-kubernetes` RPM, so install it with pip:
+RHEL 10 has no `python3-kubernetes` RPM, so install it with pip.
+
+**Online:**
 
 ```bash
 python3 -m pip install --user kubernetes
 python3 -c "import kubernetes; print(kubernetes.__version__)"
 ```
+
+**Offline:**
+
+Download the package and its dependencies on a connected machine (prefer the same OS/Python/arch as the bastion), copy the folder to the bastion, then install from the local path:
+
+```bash
+# On a connected machine
+mkdir -p offline-bundle/pip
+python3 -m pip download kubernetes -d offline-bundle/pip
+
+# On the bastion (after copying offline-bundle/pip/)
+python3 -m pip install --user --no-index --find-links=offline-bundle/pip kubernetes
+python3 -c "import kubernetes; print(kubernetes.__version__)"
+```
+
+If pip cannot find a matching wheel, re-download on a machine that matches the bastion (`python3 --version` and CPU arch), for example:
+
+```bash
+python3 -m pip download kubernetes -d offline-bundle/pip \
+  --platform manylinux2014_x86_64 --python-version 3.12 --only-binary=:all:
+```
+
+Adjust `--python-version` to match the bastion.
 
 ### 4. Cluster kubeconfig and `oc`
 
