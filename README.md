@@ -34,6 +34,7 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
   - [Encode Loki S3 Secret values](#encode-loki-s3-secret-values)
   - [Update Loki TLS CA bundle (HTTPS endpoints)](#update-loki-tls-ca-bundle-https-endpoints)
 - [Loki node placement (taints)](#loki-node-placement-taints)
+- [Keycloak Git with self-signed TLS](#keycloak-git-with-self-signed-tls)
 - [Run the deployment](#run-the-deployment)
 - [Troubleshooting](#troubleshooting)
 
@@ -268,12 +269,14 @@ Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiser
 Before deploying, set lab-specific values either by editing the patch files directly, or with the helper script:
 
 ```bash
-# 1. Edit HEADER parameters in configure-overlays.sh
+# 1. Edit HEADER parameters in configure-overlays.sh (logging/S4)
+#    and keycloak/configure-overlays.sh (Keycloak overlays)
 #    - S4_ENABLED / S4_DEPLOYED_ON_CLUSTER / KEYCLOAK_ENABLED
 #    - S4 host, credentials, Loki bucket/endpoint/storageClass/placement
-#    - Keycloak hostname, namespace, RHBK/Crunchy/Postgres settings
-# 2. Run:
+# 2. Run (root also calls keycloak/configure-overlays.sh when KEYCLOAK_ENABLED=true):
 ./configure-overlays.sh
+# Keycloak-only:
+./keycloak/configure-overlays.sh
 ```
 
 When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script also refreshes `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
@@ -370,6 +373,19 @@ oc get nodes -l node-role.kubernetes.io/infra \
 
 ---
 
+## Keycloak Git with self-signed TLS
+
+If Argo CD cannot fetch the Keycloak repo (`x509: certificate signed by unknown authority`), configure Git in [`keycloak/configure-overlays.sh`](keycloak/configure-overlays.sh):
+
+1. Set `GIT_REPO_URL` to your Git HTTPS URL.
+2. For a lab self-signed server, leave `GIT_TLS_INSECURE=true` (writes `keycloak/argoCD/git-repository-secret.yaml` with `insecure: "true"`).
+3. To trust a CA instead: `GIT_TLS_INSECURE=false`, set `GIT_CA_FILE` to the PEM, and `GIT_APPLY_CA_TO_CLUSTER=true`.
+4. Run `./keycloak/configure-overlays.sh`, then deploy (`deploy-gitops-keycload.yaml` applies the Git Secret before Applications).
+
+Details: [`keycloak/README.md`](keycloak/README.md#self-signed-git-tls).
+
+---
+
 ## Run the deployment
 
 1. Update S4 lab patches (route host, credentials) and Loki S3/CA overlays for your cluster.
@@ -412,3 +428,4 @@ oc get lokistack logging-loki -n openshift-logging
 | `CatalogSourcesUnhealthy` | Bad catalog name or unhealthy CS | `oc get catalogsource -n openshift-marketplace` and fix Subscription `source` |
 | `UIPlugin` CRD / resource not found | COO not ready or Argo RBAC | Wait for COO CSV/CRD; ensure UIPlugin create RBAC exists |
 | Loki pods Pending on scheduling | Missing infra label/taint | Label + taint nodes as above |
+| Argo CD `x509: certificate signed by unknown authority` | Self-signed Git TLS | Set `GIT_*` in `keycloak/configure-overlays.sh`, re-run, apply `git-repository-secret.yaml` |

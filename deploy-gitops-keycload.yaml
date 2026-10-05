@@ -117,50 +117,7 @@
       retries: 40
       delay: 10
 
-    # --- Logging Argo CD project + Applications ---
-
-    # Create AppProject applogging for all logging Applications
-    - name: Deploy applogging AppProject
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        src: "{{ repo_root }}/logging/argoCD/applogging-project.yaml"
-        state: present
-
-    # Register the Logging operator Application under project applogging
-    - name: Deploy logging operator
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        src: "{{ repo_root }}/logging/argoCD/loggingoperator-app-argo.yaml"
-        state: present
-
-    # Register the Loki operator Application under project applogging
-    - name: Deploy loki operator
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        src: "{{ repo_root }}/logging/argoCD/lokioperator-app-argo.yaml"
-        state: present
-
-    # Register the LokiStack instance Application under project applogging
-    - name: Deploy loki instance
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        src: "{{ repo_root }}/logging/argoCD/loki-instance-app-argo.yaml"
-        state: present
-
-    # Register the Cluster Observability Operator Application under project applogging
-    - name: Deploy coo
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        src: "{{ repo_root }}/logging/argoCD/coo-app-argo.yaml"
-        state: present
-
-    # Register the ClusterLogForwarder / logging instance Application under project applogging
-    - name: Deploy logging instance
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        src: "{{ repo_root }}/logging/argoCD/logginginstance-app-argo.yaml"
-        state: present
-
+    
     # --- Keycloak Argo CD project + Applications ---
     # git-repository-secret must exist first so Argo CD can fetch a self-signed / private Git URL.
 

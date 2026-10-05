@@ -6,7 +6,8 @@ Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize an
 
 ```text
 keycloak/
-├── argoCD/                         # AppProject appkeycloak + child Applications
+├── configure-overlays.sh           # HEADER → rewrite lab + update overlays + Git TLS
+├── argoCD/                         # AppProject, Applications, git-repository-secret
 ├── deploy-keycloak.sh              # Ordered oc apply -k (lab or update)
 ├── crunchy/
 │   ├── operator/                   # Crunchy Postgres Operator (OLM)
@@ -45,13 +46,22 @@ All application components run in namespace **`keycloak`**. The Crunchy operator
 
 ## Lab customization (before deploy)
 
-Edit the Keycloak **HEADER** parameters in [`../configure-overlays.sh`](../configure-overlays.sh), then run from the repo root:
+Edit the Keycloak **HEADER** in [`configure-overlays.sh`](configure-overlays.sh), then run:
 
 ```bash
-./configure-overlays.sh
+# From repo root — all overlays listed in KEYCLOAK_OVERLAYS (default: lab update)
+./keycloak/configure-overlays.sh
+
+# Or only the day-2 update overlay
+./keycloak/configure-overlays.sh update
+
+# Or only lab
+./keycloak/configure-overlays.sh lab
 ```
 
-Set `KEYCLOAK_ENABLED=true` (default). `KEYCLOAK_OVERLAYS="lab update"` (default) rewrites **both** overlay trees (and regenerates TLS when `GENERATE_TLS=true`):
+The root [`../configure-overlays.sh`](../configure-overlays.sh) also calls this script when `KEYCLOAK_ENABLED=true`. Edit Keycloak values in **`keycloak/configure-overlays.sh`**, not the root script.
+
+`KEYCLOAK_OVERLAYS="lab update"` (default; overridable via CLI args) rewrites those overlay trees (and regenerates TLS when `GENERATE_TLS=true`):
 
 | Parameter | Overlay file (per name in `KEYCLOAK_OVERLAYS`) |
 |-----------|--------------|
@@ -61,6 +71,9 @@ Set `KEYCLOAK_ENABLED=true` (default). `KEYCLOAK_OVERLAYS="lab update"` (default
 | `KEYCLOAK_HOSTNAME` / `KEYCLOAK_TLS_SECRET` | `instance/overlays/<name>/keycloak-patch.yaml` |
 | `KEYCLOAK_NAMESPACE` | `<name>/kustomization.yaml` namespaces |
 | `GENERATE_TLS` | `instance/overlays/<name>/tls.crt` + `tls.key` |
+| `GIT_REPO_URL` / `GIT_TARGET_REVISION` | `argoCD/*-app-argo.yaml`, `appkeycloak-project.yaml` |
+| `GIT_TLS_INSECURE` / `GIT_USERNAME` / `GIT_PASSWORD` | `argoCD/git-repository-secret.yaml` |
+| `GIT_CA_FILE` + `GIT_APPLY_CA_TO_CLUSTER` | cluster `argocd-tls-certs-cm` (optional) |
 
 Or regenerate TLS alone:
 
@@ -91,10 +104,30 @@ oc apply -k keycloak/instance/overlays/update
 
 Keycloak children live in the default **`openshift-gitops`** Argo CD instance, under AppProject **`appkeycloak`**.
 
-Two equivalent ways to register them (both are idempotent):
+### Self-signed Git TLS
+
+If Argo CD fails with `tls: failed to verify certificate: x509: certificate signed by unknown authority`, configure Git in [`configure-overlays.sh`](configure-overlays.sh) **HEADER** (`GIT_*`), then re-run the script and apply the Secret before Applications:
+
+| Mode | HEADER | What it does |
+|------|--------|--------------|
+| Lab (skip verify) | `GIT_TLS_INSECURE=true` | Writes `argoCD/git-repository-secret.yaml` with `insecure: "true"` |
+| Trust CA | `GIT_TLS_INSECURE=false`, set `GIT_CA_FILE=/path/to/ca.pem`, `GIT_APPLY_CA_TO_CLUSTER=true` | Patches `argocd-tls-certs-cm` for the Git hostname and restarts repo-server |
+
+Also set `GIT_REPO_URL` (and optional `GIT_USERNAME` / `GIT_PASSWORD`) so Application `repoURL`, AppProject `sourceRepos`, and the repository Secret match your Git server.
+
+```bash
+# 1) Edit GIT_* in keycloak/configure-overlays.sh
+./keycloak/configure-overlays.sh
+
+# 2) Apply repo Secret (playbooks do this first), then Applications
+oc apply -f keycloak/argoCD/git-repository-secret.yaml
+ansible-playbook deploy-gitops-keycload.yaml
+```
+
+Two equivalent ways to register Applications (both are idempotent):
 
 1. **App-of-Apps** — parent Application `keycloak-apps` (`gitops/app-of-apps/keycloak-apps.yaml`, project `cluster-config`) syncs `keycloak/argoCD` (AppProject + children). The root Application `cluster-apps` syncs `keycloak-apps` and `logging-apps`.
-2. **Ansible** — `deploy-gitops.yaml` still applies `keycloak/argoCD/*.yaml` directly.
+2. **Ansible** — `deploy-gitops.yaml` / `deploy-gitops-keycload.yaml` apply `keycloak/argoCD/git-repository-secret.yaml` then the AppProject and Applications.
 
 Child Applications (sync waves keep operator CRs after operators):
 
