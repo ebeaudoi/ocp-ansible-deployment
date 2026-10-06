@@ -75,7 +75,7 @@ There is no umbrella `cluster-apps` Application. The two roots sync, fail, and p
 
 ## What `deploy-gitops.yaml` does
 
-Main GitOps playbook. Runs on `localhost` with kubeconfig `ocpkubeconfig`.
+Main GitOps playbook. Runs on `localhost` with kubeconfig `/tmp/ocpkubeconfig`.
 
 ### Phase 0 — Sanity check
 
@@ -121,7 +121,7 @@ Edit `vars:` in the playbook, or override with `-e`.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `kubeconfig_path` | `ocpkubeconfig` | Cluster kubeconfig |
+| `kubeconfig_path` | `/tmp/ocpkubeconfig` | Cluster kubeconfig |
 | `verify_ssl` | `false` | TLS verify for kubernetes.core modules |
 | `repo_root` | `playbook_dir` | Repo root for manifest paths |
 | `gitops_channel` | `gitops-1.21` | GitOps operator channel (`gitopschannel` alias kept) |
@@ -239,12 +239,12 @@ python3 -m pip download kubernetes -d offline-bundle/pip \
 
 ```bash
 oc login --server=<api-url> --token=<token>
-oc config view --raw > ocpkubeconfig
+oc config view --raw > /tmp/ocpkubeconfig
 ```
 
 `deploy-s4.yaml` uses `oc kustomize` / `oc rollout` (this environment may not have `kubectl` or a standalone `kustomize` binary).
 
-Do not commit tokens or kubeconfig files.
+Do not commit tokens or kubeconfig files. Playbooks and overlay scripts expect the kubeconfig at `/tmp/ocpkubeconfig`.
 
 ### 5. Align operator Subscriptions with your cluster
 
@@ -475,4 +475,4 @@ oc get pods -n keycloak
 | `UIPlugin` CRD / resource not found | COO not ready or Argo RBAC | Wait for COO CSV/CRD; ensure UIPlugin create RBAC exists |
 | Loki pods Pending on scheduling | Nodes missing infra label/taint that matches the **rhlab** overlay | Label + taint with `node-role.kubernetes.io/infra` (see [Loki node placement](#loki-node-placement-taints)) |
 | Argo CD `x509: certificate signed by unknown authority` | Self-signed Git TLS | Set `GIT_*` in `keycloak/configure-overlays.sh`, re-run, then `deploy-gitops.yaml` (or apply `git-repository-secret.yaml`) |
-| Stale kubeconfig / `401 Unauthorized` from API | Expired token in `ocpkubeconfig` | Re-login with `oc` and rewrite `ocpkubeconfig` |
+| Stale kubeconfig / `401 Unauthorized` from API | Expired token in `/tmp/ocpkubeconfig` | Re-login with `oc` and rewrite `/tmp/ocpkubeconfig` |

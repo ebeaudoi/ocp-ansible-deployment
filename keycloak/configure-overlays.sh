@@ -76,7 +76,7 @@ GIT_CA_FILE=""
 GIT_TLS_HOST=""
 # When true and GIT_CA_FILE is set, patch openshift-gitops ConfigMap argocd-tls-certs-cm.
 GIT_APPLY_CA_TO_CLUSTER="false"
-KUBECONFIG_PATH="${KEYCLOAK_ROOT}/../ocpkubeconfig"
+KUBECONFIG_PATH="/tmp/ocpkubeconfig"
 
 # =============================================================================
 # Paths (set per overlay)

@@ -4,7 +4,7 @@
   gather_facts: false
   vars:
     # --- Cluster access ---
-    kubeconfig_path: "ocpkubeconfig"
+    kubeconfig_path: "/tmp/ocpkubeconfig"
     verify_ssl: false
     # ocp_token: "sha256~..."   # oc whoami --show-token
     # ansible_python_interpreter: "/usr/bin/python3"
