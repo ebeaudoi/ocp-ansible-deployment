@@ -16,8 +16,9 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
 
 - [Architecture overview](#architecture-overview)
 - [What `deploy-gitops.yaml` does](#what-deploy-gitopsyaml-does)
+  - [Phase 0 — Sanity check](#phase-0--sanity-check)
   - [Phase 1 — Install OpenShift GitOps](#phase-1--install-openshift-gitops)
-  - [Phase 2 — App-of-Apps (parent Applications)](#phase-2--app-of-apps-parent-applications)
+  - [Phase 2 — Two independent App-of-Apps](#phase-2--two-independent-app-of-apps)
   - [Important playbook variables](#important-playbook-variables)
 - [Prerequisites](#prerequisites)
   - [1. Install Ansible](#1-install-ansible)
@@ -45,11 +46,10 @@ deploy-gitops.yaml
   ├── OpenShift GitOps operator
   ├── default Argo CD (openshift-gitops)
   ├── Git repository Secret (self-signed / private Git)
-  └── App-of-Apps
+  └── App-of-Apps (two independent roots)
         ├── AppProject cluster-config
-        └── Application cluster-apps
-              ├── logging-apps  → logging/argoCD (applogging + children)
-              └── keycloak-apps → keycloak/argoCD (appkeycloak + children)
+        ├── Application logging-apps  → logging/argoCD (applogging + children)
+        └── Application keycloak-apps → keycloak/argoCD (appkeycloak + children)
 
 deploy-s4.yaml
   └── S4 (s4/overlays/lab) + loggingstack bucket
@@ -59,11 +59,11 @@ Everything runs in the default **`openshift-gitops`** Argo CD instance.
 
 | Layer | AppProject | What it owns |
 |-------|------------|--------------|
-| App-of-Apps parents | `cluster-config` | Applications `cluster-apps`, `logging-apps`, `keycloak-apps` |
+| App-of-Apps parents | `cluster-config` | Applications `logging-apps`, `keycloak-apps` |
 | Logging children | `applogging` | Logging operator, Loki, COO, ClusterLogForwarder |
 | Keycloak children | `appkeycloak` | Crunchy operator, RHBK operator, PostgresCluster, Keycloak |
 
-`deploy-gitops.yaml` only bootstraps GitOps + the App-of-Apps root. Child AppProjects and Applications come from Git via `logging-apps` and `keycloak-apps` (not applied again by Ansible).
+`deploy-gitops.yaml` bootstraps GitOps and two **independent** App-of-Apps roots (`logging-apps`, `keycloak-apps`). There is no umbrella `cluster-apps` Application — each root can sync, fail, or be pruned on its own. Child AppProjects and Applications come from Git (not applied again by Ansible).
 
 Parent manifests: [`gitops/app-of-apps/`](gitops/app-of-apps/). Child manifests: [`logging/argoCD/`](logging/argoCD/) and [`keycloak/argoCD/`](keycloak/argoCD/). See also [`keycloak/README.md`](keycloak/README.md).
 
@@ -73,6 +73,10 @@ Parent manifests: [`gitops/app-of-apps/`](gitops/app-of-apps/). Child manifests:
 
 `deploy-gitops.yaml` is the main GitOps playbook. It runs on `localhost` and uses kubeconfig `ocpkubeconfig`.
 
+### Phase 0 — Sanity check
+
+Fetches pods in `openshift-marketplace` to confirm the cluster API is reachable with the configured kubeconfig.
+
 ### Phase 1 — Install OpenShift GitOps
 
 1. Creates namespace `openshift-gitops-operator`
@@ -81,24 +85,27 @@ Parent manifests: [`gitops/app-of-apps/`](gitops/app-of-apps/). Child manifests:
 4. Waits for and approves the InstallPlan
 5. Waits for the Argo CD CRD and the default `openshift-gitops` ArgoCD instance
 
-### Phase 2 — App-of-Apps (parent Applications)
+### Phase 2 — Two independent App-of-Apps
 
-After GitOps is ready, the playbook applies the Git repository Secret (for self-signed/private Git), AppProject `cluster-config`, and root Application `cluster-apps` from `gitops/app-of-apps/`.
+After GitOps is ready, Ansible applies only the bootstrap objects. Argo CD then pulls child Applications and workloads from Git.
 
-| Ansible task | File | What Argo CD deploys |
-|--------------|------|----------------------|
+**Order:** Git repository Secret → AppProject `cluster-config` → Application `logging-apps` → Application `keycloak-apps`.
+
+The Git Secret is shared by both roots when they use the same HTTPS repo URL (self-signed / private Git). Deploy it before either root tries to clone.
+
+| Ansible task | File | Role |
+|--------------|------|------|
 | Deploy Git repository Secret | `keycloak/argoCD/git-repository-secret.yaml` | Repo credentials / `insecure` for Git TLS |
-| Deploy cluster-config AppProject | `gitops/app-of-apps/cluster-config-project.yaml` | AppProject `cluster-config` |
-| Deploy cluster-apps | `gitops/app-of-apps/cluster-apps.yaml` | Root app; syncs `logging-apps` and `keycloak-apps` |
+| Deploy cluster-config AppProject | `gitops/app-of-apps/cluster-config-project.yaml` | Shared AppProject for both roots |
+| Deploy logging-apps | `gitops/app-of-apps/logging-apps.yaml` | App-of-Apps #1 (logging stack) |
+| Deploy keycloak-apps | `gitops/app-of-apps/keycloak-apps.yaml` | App-of-Apps #2 (Keycloak stack) |
 
-`cluster-apps` source path is `gitops/app-of-apps` (kustomize). That directory lists `cluster-config-project.yaml`, `logging-apps.yaml`, and `keycloak-apps.yaml`. It does **not** list `cluster-apps.yaml`, so the root does not manage itself.
+| Root Application | Source path | What Argo CD creates next |
+|------------------|-------------|---------------------------|
+| `logging-apps` | `logging/argoCD` | AppProject `applogging` + logging/Loki/COO/CLF Applications → workload manifests |
+| `keycloak-apps` | `keycloak/argoCD` | AppProject `appkeycloak` + Crunchy/RHBK/Postgres/Keycloak Applications → workload manifests |
 
-| Parent Application | Source path | Creates |
-|--------------------|-------------|---------|
-| `logging-apps` | `logging/argoCD` | AppProject `applogging` + logging child Applications |
-| `keycloak-apps` | `keycloak/argoCD` | AppProject `appkeycloak` + Keycloak child Applications |
-
-Child Applications sync workloads from Git (operators, LokiStack, Keycloak, etc.). Ansible does **not** apply those child Application YAMLs or the workload manifests.
+Ansible does **not** apply child Application YAMLs or workload kustomizations. For a Keycloak-only path that still applies children directly, use `deploy-gitops-keycload.yaml`.
 
 ### Important playbook variables
 
@@ -115,7 +122,8 @@ Edit the play `vars:` block in `deploy-gitops.yaml` / `deploy-gitops-keycload.ya
 | `gitops_install_plan_approval` | `Manual` | InstallPlan approval mode |
 | `gitops_operator_namespace` | `openshift-gitops-operator` | GitOps operator namespace |
 | `argocd_namespace` / `argocd_name` | `openshift-gitops` | Default Argo CD instance |
-| `cluster_config_project_manifest` / `cluster_apps_manifest` | `gitops/app-of-apps/` | App-of-Apps parent manifests |
+| `cluster_config_project_manifest` | `gitops/app-of-apps/cluster-config-project.yaml` | Shared AppProject for parent apps |
+| `logging_apps_manifest` / `keycloak_apps_manifest` | `gitops/app-of-apps/` | App-of-Apps roots (logging / Keycloak) |
 | `keycloak_git_repo_secret_manifest` | `keycloak/argoCD/git-repository-secret.yaml` | Git repo Secret for Argo sync |
 
 Run it:
@@ -393,7 +401,7 @@ Details: [`keycloak/README.md`](keycloak/README.md#self-signed-git-tls).
 ansible-playbook deploy-s4.yaml
 ```
 
-4. Deploy GitOps + logging Applications:
+4. Deploy GitOps and both App-of-Apps roots (`logging-apps`, `keycloak-apps`):
 
 ```bash
 ansible-playbook deploy-gitops.yaml
@@ -402,11 +410,13 @@ ansible-playbook deploy-gitops.yaml
 5. Watch Applications and workloads:
 
 ```bash
-oc get appproject applogging -n openshift-gitops
-oc get applications -n openshift-gitops -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project
+oc get applications logging-apps keycloak-apps -n openshift-gitops
+oc get appproject cluster-config applogging appkeycloak -n openshift-gitops
+oc get applications -n openshift-gitops -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,SYNC:.status.sync.status,HEALTH:.status.health.status
 oc get pods -n s4
 oc get pods -n openshift-logging
 oc get lokistack logging-loki -n openshift-logging
+oc get pods -n keycloak
 ```
 
 ---

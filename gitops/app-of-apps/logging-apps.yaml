@@ -1,10 +1,10 @@
+# App-of-Apps root for the logging stack. Applied by deploy-gitops.yaml.
+# Syncs logging/argoCD (AppProject applogging + child Applications).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: logging-apps
   namespace: openshift-gitops
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
 spec:
   destination:
     namespace: openshift-gitops

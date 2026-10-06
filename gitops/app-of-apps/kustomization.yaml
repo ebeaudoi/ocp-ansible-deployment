@@ -1,5 +1,6 @@
-# Synced by Application cluster-apps. Do NOT list cluster-apps.yaml here
-# (the root Application must not manage itself).
+# Convenience bundle for manual apply. Ansible applies these files individually.
+# There is no umbrella cluster-apps Application — logging-apps and keycloak-apps
+# are independent App-of-Apps roots.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

@@ -41,10 +41,16 @@
     argocd_instance_delay: 10
 
     # --- App-of-Apps manifests (gitops/app-of-apps) ---
+    # Two independent App-of-Apps roots (no single umbrella Application):
+    #   logging_apps_manifest  → Application logging-apps
+    #   keycloak_apps_manifest → Application keycloak-apps
+    # Both use AppProject cluster-config. Each root syncs only its stack from Git.
     cluster_config_project_manifest: "{{ app_of_apps_dir }}/cluster-config-project.yaml"
-    cluster_apps_manifest: "{{ app_of_apps_dir }}/cluster-apps.yaml"
+    logging_apps_manifest: "{{ app_of_apps_dir }}/logging-apps.yaml"
+    keycloak_apps_manifest: "{{ app_of_apps_dir }}/keycloak-apps.yaml"
 
-    # --- Git repository Secret (self-signed / private Git; used by App-of-Apps sync) ---
+    # --- Git repository Secret (self-signed / private Git) ---
+    # Shared by both App-of-Apps roots when they pull from the same Git HTTPS URL.
     keycloak_git_repo_secret_manifest: "{{ keycloak_argocd_dir }}/git-repository-secret.yaml"
 
     # Compatibility alias (older docs / -e gitopschannel=...)
@@ -161,12 +167,31 @@
       delay: "{{ argocd_instance_delay }}"
 
     # =========================================================================
-    # Phase 2 — App-of-Apps (parent Applications)
-    # Applies gitops/app-of-apps: AppProject cluster-config + Application cluster-apps.
-    # cluster-apps syncs logging-apps → logging/argoCD and keycloak-apps → keycloak/argoCD.
-    # Child Applications are NOT applied by Ansible; Argo CD creates them from Git.
-    # Apply Git repo Secret first so self-signed / private Git works for sync.
+    # Phase 2 — Two independent App-of-Apps deployments
+    #
+    # Instead of one umbrella Application (cluster-apps), this playbook registers
+    # two root Applications in project cluster-config. They can sync, fail, or
+    # be pruned independently:
+    #
+    #   1) logging-apps  (gitops/app-of-apps/logging-apps.yaml)
+    #        source path: logging/argoCD
+    #        creates: AppProject applogging + logging/Loki/COO/CLF Applications
+    #        those children then sync workload manifests (operators, LokiStack, …)
+    #
+    #   2) keycloak-apps (gitops/app-of-apps/keycloak-apps.yaml)
+    #        source path: keycloak/argoCD
+    #        creates: AppProject appkeycloak + Crunchy/RHBK/Postgres/Keycloak Apps
+    #        those children then sync workload manifests
+    #
+    # Ansible only applies: Git Secret → cluster-config → the two roots.
+    # It does NOT apply child Application YAMLs or workload kustomizations;
+    # Argo CD pulls those from Git after the roots sync.
+    #
+    # Order matters for private/self-signed Git: deploy the repository Secret
+    # before either root Application tries to clone the repo.
     # =========================================================================
+
+    # Repo credentials / insecure TLS flag used by logging-apps and keycloak-apps.
     - name: Deploy Git repository Secret (self-signed / private Git)
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -174,6 +199,7 @@
         src: "{{ keycloak_git_repo_secret_manifest }}"
         state: present
 
+    # Shared Argo CD AppProject that owns both App-of-Apps root Applications.
     - name: Deploy cluster-config AppProject
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -181,9 +207,18 @@
         src: "{{ cluster_config_project_manifest }}"
         state: present
 
-    - name: Deploy cluster-apps (root App-of-Apps)
+    # App-of-Apps #1 — logging stack root (syncs logging/argoCD from Git).
+    - name: Deploy logging-apps (App-of-Apps for logging)
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         verify_ssl: "{{ verify_ssl }}"
-        src: "{{ cluster_apps_manifest }}"
+        src: "{{ logging_apps_manifest }}"
+        state: present
+
+    # App-of-Apps #2 — Keycloak stack root (syncs keycloak/argoCD from Git).
+    - name: Deploy keycloak-apps (App-of-Apps for Keycloak)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        verify_ssl: "{{ verify_ssl }}"
+        src: "{{ keycloak_apps_manifest }}"
         state: present

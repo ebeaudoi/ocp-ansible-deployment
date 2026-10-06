@@ -58,11 +58,11 @@ S4_UI_PASSWORD="changeme"
 # --- Loki S3 secret patch values
 # (logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml) ---
 # Leave ACCESS_KEY / SECRET / ENDPOINT empty to inherit from S4_* when
-# S4_ENABLED=true.
-LOKI_S3_ACCESS_KEY_ID=""
-LOKI_S3_ACCESS_KEY_SECRET=""
+# S4_ENABLED=true. (not crypted values)
+LOKI_S3_ACCESS_KEY_ID="s4admin"
+LOKI_S3_ACCESS_KEY_SECRET="s4secret"
 LOKI_S3_BUCKET="loggingstack"
-LOKI_S3_ENDPOINT=""          # empty + S4_ENABLED => https://${S4_API_HOST}
+LOKI_S3_ENDPOINT="https://s3.s4.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"          # empty + S4_ENABLED => https://${S4_API_HOST}
 LOKI_S3_FORCE_PATH_STYLE="true"
 
 # --- LokiStack CR patch values

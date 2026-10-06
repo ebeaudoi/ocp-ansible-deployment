@@ -113,9 +113,9 @@ ansible-playbook deploy-gitops-keycload.yaml
 
 Ways to register Keycloak Applications:
 
-1. **App-of-Apps (preferred)** — `deploy-gitops.yaml` installs GitOps, applies the Git repo Secret + `cluster-config` + `cluster-apps`. Argo then syncs `keycloak-apps` → `keycloak/argoCD` (AppProject + children).
+1. **App-of-Apps (preferred)** — `deploy-gitops.yaml` installs GitOps, applies the Git repo Secret + `cluster-config` + `keycloak-apps` (and `logging-apps`). Argo syncs `keycloak-apps` → `keycloak/argoCD` (AppProject + children).
 2. **Keycloak-only Ansible** — `deploy-gitops-keycload.yaml` still applies `keycloak/argoCD/*.yaml` directly (Git Secret, AppProject, Applications).
-3. **Manual** — apply App-of-Apps or `oc apply -k keycloak/argoCD`.
+3. **Manual** — apply `keycloak-apps` or `oc apply -k keycloak/argoCD`.
 
 Child Applications (sync waves keep operator CRs after operators):
 
@@ -141,7 +141,7 @@ Or apply GitOps parents only:
 ```bash
 oc apply -f keycloak/argoCD/git-repository-secret.yaml
 oc apply -f gitops/app-of-apps/cluster-config-project.yaml
-oc apply -f gitops/app-of-apps/cluster-apps.yaml
+oc apply -f gitops/app-of-apps/keycloak-apps.yaml
 # Argo syncs keycloak-apps → keycloak/argoCD
 ```
 

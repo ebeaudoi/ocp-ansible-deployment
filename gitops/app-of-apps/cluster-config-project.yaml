@@ -4,7 +4,7 @@ metadata:
   name: cluster-config
   namespace: openshift-gitops
 spec:
-  description: Parent App-of-Apps (cluster-apps, logging-apps, keycloak-apps)
+  description: Parent App-of-Apps (logging-apps, keycloak-apps)
   sourceRepos:
     - https://github.com/ebeaudoi/ocp-ansible-deployment.git
   destinations:

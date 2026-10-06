@@ -1,10 +1,10 @@
+# App-of-Apps root for the Keycloak stack. Applied by deploy-gitops.yaml.
+# Syncs keycloak/argoCD (AppProject appkeycloak + child Applications).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: keycloak-apps
   namespace: openshift-gitops
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
 spec:
   destination:
     namespace: openshift-gitops
