@@ -28,12 +28,12 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
   - [5. Align operator Subscriptions with your cluster](#5-align-operator-subscriptions-with-your-cluster)
 - [Object storage (S4) for Loki](#object-storage-s4-for-loki)
   - [Layout](#layout)
-  - [Lab overlay patches](#lab-overlay-patches)
+  - [Configure lab overlays](#configure-lab-overlays)
   - [Deploy S4 and create the `loggingstack` bucket](#deploy-s4-and-create-the-loggingstack-bucket)
   - [Encode Loki S3 Secret values](#encode-loki-s3-secret-values)
   - [Update Loki TLS CA bundle (HTTPS endpoints)](#update-loki-tls-ca-bundle-https-endpoints)
 - [Loki node placement (taints)](#loki-node-placement-taints)
-- [Keycloak Git with self-signed TLS](#keycloak-git-with-self-signed-tls) (includes `collect-git-ca.sh`)
+- [Keycloak Git with self-signed TLS](#keycloak-git-with-self-signed-tls)
 - [Run the deployment](#run-the-deployment)
 - [Troubleshooting](#troubleshooting)
 
@@ -59,23 +59,27 @@ Everything runs in the default **`openshift-gitops`** Argo CD instance.
 
 | Layer | AppProject | What it owns |
 |-------|------------|--------------|
-| App-of-Apps parents | `cluster-config` | Applications `logging-apps`, `keycloak-apps` |
+| App-of-Apps roots | `cluster-config` | Applications `logging-apps`, `keycloak-apps` |
 | Logging children | `applogging` | Logging operator, Loki, COO, ClusterLogForwarder |
 | Keycloak children | `appkeycloak` | Crunchy operator, RHBK operator, PostgresCluster, Keycloak |
 
-`deploy-gitops.yaml` bootstraps GitOps and two **independent** App-of-Apps roots (`logging-apps`, `keycloak-apps`). There is no umbrella `cluster-apps` Application — each root can sync, fail, or be pruned on its own. Child AppProjects and Applications come from Git (not applied again by Ansible).
+There is no umbrella `cluster-apps` Application. The two roots sync, fail, and prune independently.
 
-Parent manifests: [`gitops/app-of-apps/`](gitops/app-of-apps/). Child manifests: [`logging/argoCD/`](logging/argoCD/) and [`keycloak/argoCD/`](keycloak/argoCD/). See also [`keycloak/README.md`](keycloak/README.md).
+- Parent manifests: [`gitops/app-of-apps/`](gitops/app-of-apps/) (Ansible applies these files individually; `kustomization.yaml` is for optional manual apply)
+- Child manifests: [`logging/argoCD/`](logging/argoCD/), [`keycloak/argoCD/`](keycloak/argoCD/)
+- Keycloak details: [`keycloak/README.md`](keycloak/README.md)
+
+**Typical order:** configure overlays → commit/push → `deploy-s4.yaml` → `deploy-gitops.yaml`.
 
 ---
 
 ## What `deploy-gitops.yaml` does
 
-`deploy-gitops.yaml` is the main GitOps playbook. It runs on `localhost` and uses kubeconfig `ocpkubeconfig`.
+Main GitOps playbook. Runs on `localhost` with kubeconfig `ocpkubeconfig`.
 
 ### Phase 0 — Sanity check
 
-Fetches pods in `openshift-marketplace` to confirm the cluster API is reachable with the configured kubeconfig.
+Fetches pods in `openshift-marketplace` to confirm the cluster API is reachable.
 
 ### Phase 1 — Install OpenShift GitOps
 
@@ -87,52 +91,66 @@ Fetches pods in `openshift-marketplace` to confirm the cluster API is reachable 
 
 ### Phase 2 — Two independent App-of-Apps
 
-After GitOps is ready, Ansible applies only the bootstrap objects. Argo CD then pulls child Applications and workloads from Git.
+Ansible applies only bootstrap objects. Argo CD then pulls child Applications and workloads from Git.
 
-**Order:** Git repository Secret → AppProject `cluster-config` → Application `logging-apps` → Application `keycloak-apps`.
+**Apply order:** Git repository Secret → AppProject `cluster-config` → `logging-apps` → `keycloak-apps`.
 
-The Git Secret is shared by both roots when they use the same HTTPS repo URL (self-signed / private Git). Deploy it before either root tries to clone.
+The Git Secret is shared by both roots when they use the same HTTPS repo URL. Apply it before either root clones the repo.
 
 | Ansible task | File | Role |
 |--------------|------|------|
 | Deploy Git repository Secret | `keycloak/argoCD/git-repository-secret.yaml` | Repo credentials / `insecure` for Git TLS |
 | Deploy cluster-config AppProject | `gitops/app-of-apps/cluster-config-project.yaml` | Shared AppProject for both roots |
-| Deploy logging-apps | `gitops/app-of-apps/logging-apps.yaml` | App-of-Apps #1 (logging stack) |
-| Deploy keycloak-apps | `gitops/app-of-apps/keycloak-apps.yaml` | App-of-Apps #2 (Keycloak stack) |
+| Deploy logging-apps | `gitops/app-of-apps/logging-apps.yaml` | App-of-Apps #1 — logging stack |
+| Deploy keycloak-apps | `gitops/app-of-apps/keycloak-apps.yaml` | App-of-Apps #2 — Keycloak stack |
 
 | Root Application | Source path | What Argo CD creates next |
 |------------------|-------------|---------------------------|
-| `logging-apps` | `logging/argoCD` | AppProject `applogging` + logging/Loki/COO/CLF Applications → workload manifests |
-| `keycloak-apps` | `keycloak/argoCD` | AppProject `appkeycloak` + Crunchy/RHBK/Postgres/Keycloak Applications → workload manifests |
+| `logging-apps` | `logging/argoCD` | AppProject `applogging` + logging/Loki/COO/CLF Applications → workloads |
+| `keycloak-apps` | `keycloak/argoCD` | AppProject `appkeycloak` + Crunchy/RHBK/Postgres/Keycloak Applications → workloads |
 
-Ansible does **not** apply child Application YAMLs or workload kustomizations. For a Keycloak-only path that still applies children directly, use `deploy-gitops-keycload.yaml`.
+Ansible does **not** apply child Application YAMLs or workload kustomizations.
+
+**Keycloak-only alternative:** `deploy-gitops-keycload.yaml` (filename is intentional) still installs GitOps if needed, then applies `keycloak/argoCD` children directly — it does **not** use `logging-apps` / `keycloak-apps`.
 
 ### Important playbook variables
 
-Edit the play `vars:` block in `deploy-gitops.yaml` / `deploy-gitops-keycload.yaml` (or override with `-e`).
+Edit `vars:` in the playbook, or override with `-e`.
+
+#### `deploy-gitops.yaml`
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `kubeconfig_path` | `ocpkubeconfig` | Cluster kubeconfig |
 | `verify_ssl` | `false` | TLS verify for kubernetes.core modules |
-| `repo_root` | `playbook_dir` | Repo root for Application YAML paths |
+| `repo_root` | `playbook_dir` | Repo root for manifest paths |
 | `gitops_channel` | `gitops-1.21` | GitOps operator channel (`gitopschannel` alias kept) |
 | `gitops_catalog_source` | `redhat-operators` | OLM catalog for GitOps Subscription |
 | `gitops_catalog_namespace` | `openshift-marketplace` | Catalog namespace |
 | `gitops_install_plan_approval` | `Manual` | InstallPlan approval mode |
 | `gitops_operator_namespace` | `openshift-gitops-operator` | GitOps operator namespace |
 | `argocd_namespace` / `argocd_name` | `openshift-gitops` | Default Argo CD instance |
-| `cluster_config_project_manifest` | `gitops/app-of-apps/cluster-config-project.yaml` | Shared AppProject for parent apps |
-| `logging_apps_manifest` / `keycloak_apps_manifest` | `gitops/app-of-apps/` | App-of-Apps roots (logging / Keycloak) |
+| `cluster_config_project_manifest` | `gitops/app-of-apps/cluster-config-project.yaml` | Shared AppProject |
+| `logging_apps_manifest` | `gitops/app-of-apps/logging-apps.yaml` | Logging App-of-Apps root |
+| `keycloak_apps_manifest` | `gitops/app-of-apps/keycloak-apps.yaml` | Keycloak App-of-Apps root |
 | `keycloak_git_repo_secret_manifest` | `keycloak/argoCD/git-repository-secret.yaml` | Git repo Secret for Argo sync |
 
-Run it:
+#### `deploy-gitops-keycload.yaml`
+
+Shares the GitOps / kubeconfig variables above. Instead of App-of-Apps roots, it applies:
+
+| Variable | Default |
+|----------|---------|
+| `keycloak_git_repo_secret_manifest` | `keycloak/argoCD/git-repository-secret.yaml` |
+| `keycloak_appproject_manifest` | `keycloak/argoCD/appkeycloak-project.yaml` |
+| `crunchy_operator_app_manifest` | `keycloak/argoCD/crunchy-operator-app-argo.yaml` |
+| `rhbk_operator_app_manifest` | `keycloak/argoCD/rhbk-operator-app-argo.yaml` |
+| `crunchy_instance_app_manifest` | `keycloak/argoCD/crunchy-instance-app-argo.yaml` |
+| `keycloak_instance_app_manifest` | `keycloak/argoCD/keycloak-instance-app-argo.yaml` |
 
 ```bash
 ansible-playbook deploy-gitops.yaml
-# Keycloak-only GitOps path:
-ansible-playbook deploy-gitops-keycload.yaml
-# Example override:
+ansible-playbook deploy-gitops-keycload.yaml          # Keycloak children only
 ansible-playbook deploy-gitops.yaml -e gitops_channel=gitops-1.22
 ```
 
@@ -185,9 +203,9 @@ ansible-galaxy collection list
 
 ### 3. Install the Python `kubernetes` client (pip)
 
-The Ansible collection `kubernetes.core` is only the module code. At runtime, modules such as `kubernetes.core.k8s` and `kubernetes.core.k8s_info` (used by `deploy-gitops.yaml` and `deploy-s4.yaml`) import the official Python **kubernetes** client to talk to the OpenShift API. Without that library, playbooks fail with `Failed to import ... kubernetes` even when the collection is installed.
+`kubernetes.core` is only the Ansible module code. At runtime, `kubernetes.core.k8s` / `k8s_info` import the Python **kubernetes** client. Without it, playbooks fail with `Failed to import ... kubernetes` even when the collection is installed.
 
-RHEL 10 has no `python3-kubernetes` RPM, so install it with pip.
+RHEL 10 has no `python3-kubernetes` RPM, so install with pip.
 
 **Online:**
 
@@ -198,28 +216,24 @@ python3 -c "import kubernetes; print(kubernetes.__version__)"
 
 **Offline:**
 
-Download the package and its dependencies on a connected machine (prefer the same OS/Python/arch as the bastion), copy the folder to the bastion, then install from the local path:
+Download on a connected machine that matches the bastion OS/Python/arch, copy to the bastion, then install locally:
 
 ```bash
 # On a connected machine
 mkdir -p offline-bundle/pip
 python3 -m pip download kubernetes -d offline-bundle/pip
 
-#if it fails - sudo dnf install python3-pip
-
 # On the bastion (after copying offline-bundle/pip/)
 python3 -m pip install --user --no-index --find-links=offline-bundle/pip kubernetes
 python3 -c "import kubernetes; print(kubernetes.__version__)"
 ```
 
-If pip cannot find a matching wheel, re-download on a machine that matches the bastion (`python3 --version` and CPU arch), for example:
+If pip cannot find a matching wheel, re-download with platform pins (adjust `--python-version` to the bastion):
 
 ```bash
 python3 -m pip download kubernetes -d offline-bundle/pip \
   --platform manylinux2014_x86_64 --python-version 3.12 --only-binary=:all:
 ```
-
-Adjust `--python-version` to match the bastion.
 
 ### 4. Cluster kubeconfig and `oc`
 
@@ -239,7 +253,7 @@ Before the first sync, update catalog/channel values in:
 - `logging/operator/base/subscription.yaml`
 - `logging/loki/base/subscription.yaml`
 - `logging/coo/base/coo-operator.yaml`
-- GitOps Subscription in `deploy-gitops.yaml` (`gitops_channel`, `gitops_catalog_source`)
+- GitOps Subscription vars in `deploy-gitops.yaml` (`gitops_channel`, `gitops_catalog_source`)
 
 ```bash
 oc get catalogsource -n openshift-marketplace
@@ -255,34 +269,37 @@ Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiser
 
 | Path | Purpose |
 |------|---------|
-| `s4/base/` | Base manifests (Deployment, Service, Routes, Secret, PVC, ConfigMap) + `kustomization.yaml` |
+| `s4/base/` | Base manifests (Deployment, Service, Routes, Secret, PVC, ConfigMap) |
 | `s4/overlays/lab/` | Lab patches for S3 route host and credentials |
-| `deploy-s4.yaml` | Ansible playbook to deploy S4 and create the Loki bucket |
+| `deploy-s4.yaml` | Deploy S4 and create the Loki bucket |
 
-### Lab overlay patches
+### Configure lab overlays
 
-Before deploying, set lab-specific values either by editing the patch files directly, or with the helper script:
+Set lab values in the script HEADER, then run the script (preferred), or edit the patch files directly.
 
 ```bash
-# 1. Edit HEADER parameters in configure-overlays.sh (logging/S4)
-#    and keycloak/configure-overlays.sh (Keycloak overlays)
+# 1. Edit HEADER in configure-overlays.sh (logging / S4 / Loki)
+#    and keycloak/configure-overlays.sh (Keycloak)
 #    - S4_ENABLED / S4_DEPLOYED_ON_CLUSTER / KEYCLOAK_ENABLED
-#    - S4 host, credentials, Loki bucket/endpoint/storageClass/placement
+#    - S4_API_HOST, credentials, Loki bucket/endpoint/storageClass/placement
 # 2. Run (root also calls keycloak/configure-overlays.sh when KEYCLOAK_ENABLED=true):
 ./configure-overlays.sh
-# Keycloak-only:
+
+# Keycloak overlays only:
 ./keycloak/configure-overlays.sh
 ```
 
-When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script also refreshes `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
+When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script refreshes `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
 
 Manual patch files:
 
-- `s4/overlays/lab/s4-route-s3-patch.yaml` — `spec.host` for the S3 API Route (`s4-api`)
-- `s4/overlays/lab/s4-secret-patch.yaml` — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `UI_USERNAME`, `UI_PASSWORD`
-- `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml` — base64 S3 secret fields
-- `logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml` — `storageClassName` / schema
-- `logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml` — infra `nodeSelector` and taint `tolerations`
+| File | What to set |
+|------|-------------|
+| `s4/overlays/lab/s4-route-s3-patch.yaml` | `spec.host` for Route `s4-api` (S3 API hostname) |
+| `s4/overlays/lab/s4-secret-patch.yaml` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `UI_USERNAME`, `UI_PASSWORD` |
+| `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml` | Base64 S3 secret fields |
+| `logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml` | `storageClassName` / schema |
+| `logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml` | Infra `nodeSelector` and taint `tolerations` |
 
 ### Deploy S4 and create the `loggingstack` bucket
 
@@ -291,29 +308,30 @@ Manual patch files:
 1. Creates namespace `s4`
 2. Renders `s4/overlays/lab` with `oc kustomize` and applies it
 3. Restarts the `s4` Deployment so pods pick up Secret changes
-4. Waits for rollout and the UI Route / API
+4. Waits for rollout
 5. Reads UI credentials from Secret `s4-credentials`
-6. Logs into the [S4 REST API](https://github.com/rh-aiservices-bu/s4/tree/main/docs/api) and creates bucket **`loggingstack`** (HTTP 409 = already exists)
+6. Waits for the UI Route (`s4`) and API readiness (REST base: `https://<ui-route-host>/api`)
+7. Logs into the [S4 REST API](https://github.com/rh-aiservices-bu/s4/tree/main/docs/api) and creates bucket **`loggingstack`** (HTTP 409 = already exists)
 
 ```bash
 ansible-playbook deploy-s4.yaml
 ```
 
-Run this **before** (or while) Loki is syncing so the bucket and S3 endpoint exist.
+Run this **before** Loki syncs so the bucket and S3 endpoint exist.
+
+Loki’s S3 endpoint uses the **S3 Route** hostname (`s4-api` → `S4_API_HOST` from `configure-overlays.sh`), not the UI Route host.
 
 ### Encode Loki S3 Secret values
 
-Files:
-
 - Base: `logging/loki/instance/base/logging-loki-s3.yaml`
-- rhlab overlay: `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml`
+- Lab overlay: `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml`
 
 | Key | Example plaintext |
 |-----|-------------------|
 | `access_key_id` | `s4admin` |
 | `access_key_secret` | `s4secret` |
 | `bucketnames` | `loggingstack` |
-| `endpoint` | `https://s4-api-s4.apps.<cluster-domain>` or your custom S3 route host (no trailing space) |
+| `endpoint` | `https://<S4_API_HOST>` (no trailing slash or space) |
 | `forcepathstyle` | `true` |
 
 ```bash
@@ -326,19 +344,19 @@ printf '%s' '<base64-value>' | base64 -d; echo   # verify
 LokiStack uses ConfigMap `loki-s3-ca-bundle` key `service-ca.crt`.
 
 - Base: `logging/loki/instance/base/loki-s3-ca-bundle.yaml`
-- rhlab patch: `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml`
+- Lab patch: `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml`
 
 Indent every PEM line under `service-ca.crt: |` (or YAML will treat `---` as a document break).
 
 ```bash
 echo | openssl s_client -showcerts \
-  -servername s4-api-s4.apps.<cluster-domain> \
-  -connect s4-api-s4.apps.<cluster-domain>:443 \
+  -servername <S4_API_HOST> \
+  -connect <S4_API_HOST>:443 \
   2>/dev/null \
 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > /tmp/s4-chain.pem
 ```
 
-Use the **issuer/CA** cert (not only the leaf) in the ConfigMap/patch.
+Use the **issuer/CA** cert (not only the leaf) in the ConfigMap/patch. Prefer regenerating via `configure-overlays.sh` with `S4_DEPLOYED_ON_CLUSTER=true` after S4 is up.
 
 Also set Loki `storageClassName` to a StorageClass that exists on the cluster:
 
@@ -352,25 +370,36 @@ Example for this lab: `thin-csi` in `logging/loki/instance/overlays/rhlab/lokist
 
 ## Loki node placement (taints)
 
-LokiStack defaults in `logging/loki/instance/base/03-loki-cr.yaml` pin every component to infra nodes with a Loki taint. Override that per environment in `logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml` (or set `LOKI_NODE_SELECTOR_*` / `LOKI_TOLERATION_*` in `configure-overlays.sh` and re-run the script). Pods stay `Pending` until nodes match.
+Argo CD syncs the **rhlab** overlay (`logging/loki/instance/overlays/rhlab/`), which overrides base placement.
 
-- Label: `node-role.kubernetes.io/infra=`
-- Taint: `workload=loki:NoSchedule`
+| Layer | Toleration (lab default) |
+|-------|--------------------------|
+| Base `03-loki-cr.yaml` | `workload=loki:NoSchedule` (overridden by rhlab) |
+| rhlab / `configure-overlays.sh` | `node-role.kubernetes.io/infra` with `Exists` (empty value) |
+
+Lab defaults from `configure-overlays.sh`:
+
+- Label / `nodeSelector`: `node-role.kubernetes.io/infra=`
+- Taint: `node-role.kubernetes.io/infra:NoSchedule` (no value — matches `Exists`)
+
+Change `LOKI_NODE_SELECTOR_*` / `LOKI_TOLERATION_*` in `configure-overlays.sh` and re-run the script if your cluster uses different placement.
 
 ```bash
 NODE=<node-name>
 oc label node "$NODE" node-role.kubernetes.io/infra=
-oc adm taint node "$NODE" workload=loki:NoSchedule
+oc adm taint node "$NODE" node-role.kubernetes.io/infra:NoSchedule
 
 oc get nodes -l node-role.kubernetes.io/infra \
   -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
 ```
 
+Pods stay `Pending` until nodes match the overlay’s selector and tolerations.
+
 ---
 
 ## Keycloak Git with self-signed TLS
 
-If Argo CD cannot fetch the Keycloak repo (`x509: certificate signed by unknown authority`), configure Git in [`keycloak/configure-overlays.sh`](keycloak/configure-overlays.sh).
+If Argo CD cannot fetch the repo (`x509: certificate signed by unknown authority`), configure Git in [`keycloak/configure-overlays.sh`](keycloak/configure-overlays.sh).
 
 **Collect the Git CA** (issuer preferred; leaf if the cert is self-signed):
 
@@ -382,10 +411,18 @@ If Argo CD cannot fetch the Keycloak repo (`x509: certificate signed by unknown 
 ./keycloak/collect-git-ca.sh git.example.com:8443 -o keycloak/argoCD/git-ca.crt
 ```
 
-Then either:
+Then choose a mode and re-run the overlay script:
 
 1. **Lab (skip verify):** set `GIT_TLS_INSECURE=true` in `keycloak/configure-overlays.sh`.
-2. **Trust CA:** set `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=keycloak/argoCD/git-ca.crt`, `GIT_APPLY_CA_TO_CLUSTER=true`, set `GIT_REPO_URL`, run `./keycloak/configure-overlays.sh`, then `ansible-playbook deploy-gitops-keycload.yaml`.
+2. **Trust CA:** set `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=keycloak/argoCD/git-ca.crt`, `GIT_APPLY_CA_TO_CLUSTER=true`, and `GIT_REPO_URL`.
+
+```bash
+./keycloak/configure-overlays.sh
+# Full stack (App-of-Apps) — applies Git Secret then both roots:
+ansible-playbook deploy-gitops.yaml
+# Or Keycloak-only path (applies Secret + Keycloak children directly):
+ansible-playbook deploy-gitops-keycload.yaml
+```
 
 Details: [`keycloak/README.md`](keycloak/README.md#self-signed-git-tls).
 
@@ -393,7 +430,7 @@ Details: [`keycloak/README.md`](keycloak/README.md#self-signed-git-tls).
 
 ## Run the deployment
 
-1. Update S4 lab patches (route host, credentials) and Loki S3/CA overlays for your cluster.
+1. Edit HEADER values and run `./configure-overlays.sh` (and Keycloak script if needed).
 2. Commit and push Git changes Argo CD should sync (secrets, CA, overlays, apps).
 3. Deploy S4 and create the bucket:
 
@@ -401,18 +438,20 @@ Details: [`keycloak/README.md`](keycloak/README.md#self-signed-git-tls).
 ansible-playbook deploy-s4.yaml
 ```
 
-4. Deploy GitOps and both App-of-Apps roots (`logging-apps`, `keycloak-apps`):
+4. Optionally re-run `./configure-overlays.sh` with `S4_DEPLOYED_ON_CLUSTER=true` to refresh the Loki S3 CA, then commit/push again.
+5. Deploy GitOps and both App-of-Apps roots:
 
 ```bash
 ansible-playbook deploy-gitops.yaml
 ```
 
-5. Watch Applications and workloads:
+6. Watch Applications and workloads:
 
 ```bash
 oc get applications logging-apps keycloak-apps -n openshift-gitops
 oc get appproject cluster-config applogging appkeycloak -n openshift-gitops
-oc get applications -n openshift-gitops -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,SYNC:.status.sync.status,HEALTH:.status.health.status
+oc get applications -n openshift-gitops \
+  -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,SYNC:.status.sync.status,HEALTH:.status.health.status
 oc get pods -n s4
 oc get pods -n openshift-logging
 oc get lokistack logging-loki -n openshift-logging
@@ -434,5 +473,6 @@ oc get pods -n keycloak
 | `pod has unbound immediate PersistentVolumeClaims` | Wrong/missing StorageClass | Set `storageClassName` to an existing SC (e.g. `thin-csi`) |
 | `CatalogSourcesUnhealthy` | Bad catalog name or unhealthy CS | `oc get catalogsource -n openshift-marketplace` and fix Subscription `source` |
 | `UIPlugin` CRD / resource not found | COO not ready or Argo RBAC | Wait for COO CSV/CRD; ensure UIPlugin create RBAC exists |
-| Loki pods Pending on scheduling | Missing infra label/taint | Label + taint nodes as above |
-| Argo CD `x509: certificate signed by unknown authority` | Self-signed Git TLS | Set `GIT_*` in `keycloak/configure-overlays.sh`, re-run, apply `git-repository-secret.yaml` |
+| Loki pods Pending on scheduling | Nodes missing infra label/taint that matches the **rhlab** overlay | Label + taint with `node-role.kubernetes.io/infra` (see [Loki node placement](#loki-node-placement-taints)) |
+| Argo CD `x509: certificate signed by unknown authority` | Self-signed Git TLS | Set `GIT_*` in `keycloak/configure-overlays.sh`, re-run, then `deploy-gitops.yaml` (or apply `git-repository-secret.yaml`) |
+| Stale kubeconfig / `401 Unauthorized` from API | Expired token in `ocpkubeconfig` | Re-login with `oc` and rewrite `ocpkubeconfig` |
