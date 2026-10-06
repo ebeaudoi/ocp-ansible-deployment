@@ -4,13 +4,12 @@
 #
 # Edit the parameters in the HEADER section, then run (from repo root or here):
 #   ./keycloak/configure-overlays.sh
-#   ./keycloak/configure-overlays.sh lab update    # optional overlay list
 #
-# Rewrites every Keycloak kustomize overlay (lab + update by default):
-#   - operator/overlays/<name>/          (RHBK Subscription + namespace)
-#   - crunchy/operator/overlays/<name>/  (Crunchy Subscription)
-#   - crunchy/instance/overlays/<name>/  (PostgresCluster)
-#   - instance/overlays/<name>/          (Keycloak CR + TLS)
+# Rewrites the Keycloak kustomize lab overlay:
+#   - operator/overlays/lab/          (RHBK Subscription + namespace)
+#   - crunchy/operator/overlays/lab/  (Crunchy Subscription)
+#   - crunchy/instance/overlays/lab/  (PostgresCluster)
+#   - instance/overlays/lab/          (Keycloak CR + TLS)
 #
 # Also rewrites Argo CD Git settings under argoCD/ for self-signed / private Git:
 #   - argoCD/git-repository-secret.yaml
@@ -28,9 +27,8 @@ ARGOCD_DIR="${KEYCLOAK_ROOT}/argoCD"
 # HEADER — edit these values for your lab / cluster
 # =============================================================================
 
-# Space-separated overlay names under */overlays/ (lab = initial, update = day-2).
-# Override on the CLI: ./keycloak/configure-overlays.sh update
-KEYCLOAK_OVERLAYS="lab update"
+# Overlay name under */overlays/ (single lab overlay for deploy and day-2 changes).
+KEYCLOAK_OVERLAYS="lab"
 
 # Namespace used by Keycloak, PostgresCluster, and RHBK operator resources
 KEYCLOAK_NAMESPACE="keycloak"
@@ -574,9 +572,8 @@ main() {
   echo
   echo "Done. Review git diff, then apply GitOps objects and/or overlays:"
   echo "  oc apply -f keycloak/argoCD/git-repository-secret.yaml"
-  echo "  ansible-playbook deploy-gitops-keycload.yaml"
-  echo "  ./keycloak/deploy-keycloak.sh overlays/lab      # initial (direct oc)"
-  echo "  ./keycloak/deploy-keycloak.sh overlays/update   # day-2 update"
+  echo "  ansible-playbook deploy-gitops.yaml"
+  echo "  ./keycloak/deploy-keycloak.sh    # direct oc apply -k overlays/lab"
 }
 
 main "$@"
