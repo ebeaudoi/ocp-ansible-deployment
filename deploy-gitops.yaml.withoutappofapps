@@ -11,7 +11,6 @@
 
     # --- Paths ---
     repo_root: "{{ playbook_dir }}"
-    app_of_apps_dir: "{{ repo_root }}/gitops/app-of-apps"
     logging_argocd_dir: "{{ repo_root }}/logging/argoCD"
     keycloak_argocd_dir: "{{ repo_root }}/keycloak/argoCD"
 
@@ -41,10 +40,6 @@
     argocd_instance_retries: 40
     argocd_instance_delay: 10
 
-    # --- App-of-Apps manifests (gitops/app-of-apps) ---
-    cluster_config_project_manifest: "{{ app_of_apps_dir }}/cluster-config-project.yaml"
-    cluster_apps_manifest: "{{ app_of_apps_dir }}/cluster-apps.yaml"
-
     # --- Logging Argo CD manifests ---
     logging_appproject_manifest: "{{ logging_argocd_dir }}/applogging-project.yaml"
     logging_operator_app_manifest: "{{ logging_argocd_dir }}/loggingoperator-app-argo.yaml"
@@ -65,9 +60,7 @@
     gitopschannel: "{{ gitops_channel }}"
 
   tasks:
-    # =========================================================================
-    # Phase 0 — Sanity check (cluster API reachable)
-    # =========================================================================
+    # Sanity-check cluster API access via the marketplace namespace
     - name: Fetch list of pods
       kubernetes.core.k8s_info:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -77,9 +70,8 @@
         namespace: "{{ sanity_check_namespace }}"
       register: pod_list
 
-    # =========================================================================
-    # Phase 1 — Install OpenShift GitOps operator + wait for Argo CD
-    # =========================================================================
+    # --- OpenShift GitOps Operator ---
+
     - name: Ensure GitOps operator namespace exists
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -174,37 +166,8 @@
       retries: "{{ argocd_instance_retries }}"
       delay: "{{ argocd_instance_delay }}"
 
-    # =========================================================================
-    # Phase 2 — App-of-Apps (parent Applications)
-    # Applies gitops/app-of-apps: AppProject cluster-config + Application cluster-apps.
-    # cluster-apps syncs logging-apps and keycloak-apps from Git (kustomize path).
-    # Apply Git repo Secret first so self-signed / private Git works for sync.
-    # =========================================================================
-    - name: Deploy Keycloak Git repository Secret (self-signed / private Git)
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ keycloak_git_repo_secret_manifest }}"
-        state: present
+    # --- Logging Argo CD project + Applications ---
 
-    - name: Deploy cluster-config AppProject
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ cluster_config_project_manifest }}"
-        state: present
-
-    - name: Deploy cluster-apps (root App-of-Apps)
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ cluster_apps_manifest }}"
-        state: present
-
-    # =========================================================================
-    # Phase 3 — Create logging Argo CD Applications (Ansible path)
-    # Idempotent with App-of-Apps: same objects as logging/argoCD (synced by logging-apps).
-    # =========================================================================
     - name: Deploy applogging AppProject
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
@@ -247,10 +210,16 @@
         src: "{{ logging_instance_app_manifest }}"
         state: present
 
-    # =========================================================================
-    # Phase 4 — Create Keycloak Argo CD Applications (Ansible path)
-    # Idempotent with App-of-Apps: same objects as keycloak/argoCD (synced by keycloak-apps).
-    # =========================================================================
+    # --- Keycloak Argo CD project + Applications ---
+    # git-repository-secret must exist first so Argo CD can fetch a self-signed / private Git URL.
+
+    - name: Deploy Keycloak Git repository Secret (self-signed / private Git)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        verify_ssl: "{{ verify_ssl }}"
+        src: "{{ keycloak_git_repo_secret_manifest }}"
+        state: present
+
     - name: Deploy appkeycloak AppProject
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"

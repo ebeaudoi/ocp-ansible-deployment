@@ -1,0 +1,29 @@
+# Root App-of-Apps Application. Applied by Ansible (deploy-gitops.yaml).
+# Intentionally NOT listed in kustomization.yaml so cluster-apps does not manage itself.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cluster-apps
+  namespace: openshift-gitops
+spec:
+  destination:
+    namespace: openshift-gitops
+    server: https://kubernetes.default.svc
+  project: cluster-config
+  source:
+    path: gitops/app-of-apps
+    repoURL: https://github.com/ebeaudoi/ocp-ansible-deployment.git
+    targetRevision: HEAD
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

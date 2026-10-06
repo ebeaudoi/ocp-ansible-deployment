@@ -1,0 +1,9 @@
+# Synced by Application cluster-apps. Do NOT list cluster-apps.yaml here
+# (the root Application must not manage itself).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - cluster-config-project.yaml
+  - logging-apps.yaml
+  - keycloak-apps.yaml

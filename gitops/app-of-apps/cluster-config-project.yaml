@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: cluster-config
+  namespace: openshift-gitops
+spec:
+  description: Parent App-of-Apps (cluster-apps, logging-apps, keycloak-apps)
+  sourceRepos:
+    - https://github.com/ebeaudoi/ocp-ansible-deployment.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: openshift-gitops
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

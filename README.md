@@ -142,6 +142,7 @@ Edit the play `vars:` block in `deploy-gitops.yaml` / `deploy-gitops-keycload.ya
 | `gitops_install_plan_approval` | `Manual` | InstallPlan approval mode |
 | `gitops_operator_namespace` | `openshift-gitops-operator` | GitOps operator namespace |
 | `argocd_namespace` / `argocd_name` | `openshift-gitops` | Default Argo CD instance |
+| `cluster_config_project_manifest` / `cluster_apps_manifest` | `gitops/app-of-apps/` | App-of-Apps parent manifests |
 | `*_app_manifest` / `*_appproject_manifest` | under `logging/argoCD` or `keycloak/argoCD` | Manifest paths to apply |
 
 Run it:
