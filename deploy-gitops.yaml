@@ -12,7 +12,6 @@
     # --- Paths ---
     repo_root: "{{ playbook_dir }}"
     app_of_apps_dir: "{{ repo_root }}/gitops/app-of-apps"
-    logging_argocd_dir: "{{ repo_root }}/logging/argoCD"
     keycloak_argocd_dir: "{{ repo_root }}/keycloak/argoCD"
 
     # --- OpenShift GitOps operator (OLM) ---
@@ -45,21 +44,8 @@
     cluster_config_project_manifest: "{{ app_of_apps_dir }}/cluster-config-project.yaml"
     cluster_apps_manifest: "{{ app_of_apps_dir }}/cluster-apps.yaml"
 
-    # --- Logging Argo CD manifests ---
-    logging_appproject_manifest: "{{ logging_argocd_dir }}/applogging-project.yaml"
-    logging_operator_app_manifest: "{{ logging_argocd_dir }}/loggingoperator-app-argo.yaml"
-    loki_operator_app_manifest: "{{ logging_argocd_dir }}/lokioperator-app-argo.yaml"
-    loki_instance_app_manifest: "{{ logging_argocd_dir }}/loki-instance-app-argo.yaml"
-    coo_app_manifest: "{{ logging_argocd_dir }}/coo-app-argo.yaml"
-    logging_instance_app_manifest: "{{ logging_argocd_dir }}/logginginstance-app-argo.yaml"
-
-    # --- Keycloak Argo CD manifests ---
+    # --- Git repository Secret (self-signed / private Git; used by App-of-Apps sync) ---
     keycloak_git_repo_secret_manifest: "{{ keycloak_argocd_dir }}/git-repository-secret.yaml"
-    keycloak_appproject_manifest: "{{ keycloak_argocd_dir }}/appkeycloak-project.yaml"
-    crunchy_operator_app_manifest: "{{ keycloak_argocd_dir }}/crunchy-operator-app-argo.yaml"
-    rhbk_operator_app_manifest: "{{ keycloak_argocd_dir }}/rhbk-operator-app-argo.yaml"
-    crunchy_instance_app_manifest: "{{ keycloak_argocd_dir }}/crunchy-instance-app-argo.yaml"
-    keycloak_instance_app_manifest: "{{ keycloak_argocd_dir }}/keycloak-instance-app-argo.yaml"
 
     # Compatibility alias (older docs / -e gitopschannel=...)
     gitopschannel: "{{ gitops_channel }}"
@@ -177,10 +163,11 @@
     # =========================================================================
     # Phase 2 — App-of-Apps (parent Applications)
     # Applies gitops/app-of-apps: AppProject cluster-config + Application cluster-apps.
-    # cluster-apps syncs logging-apps and keycloak-apps from Git (kustomize path).
+    # cluster-apps syncs logging-apps → logging/argoCD and keycloak-apps → keycloak/argoCD.
+    # Child Applications are NOT applied by Ansible; Argo CD creates them from Git.
     # Apply Git repo Secret first so self-signed / private Git works for sync.
     # =========================================================================
-    - name: Deploy Keycloak Git repository Secret (self-signed / private Git)
+    - name: Deploy Git repository Secret (self-signed / private Git)
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         verify_ssl: "{{ verify_ssl }}"
@@ -199,89 +186,4 @@
         kubeconfig: "{{ kubeconfig_path }}"
         verify_ssl: "{{ verify_ssl }}"
         src: "{{ cluster_apps_manifest }}"
-        state: present
-
-    # =========================================================================
-    # Phase 3 — Create logging Argo CD Applications (Ansible path)
-    # Idempotent with App-of-Apps: same objects as logging/argoCD (synced by logging-apps).
-    # =========================================================================
-    - name: Deploy applogging AppProject
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ logging_appproject_manifest }}"
-        state: present
-
-    - name: Deploy logging operator
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ logging_operator_app_manifest }}"
-        state: present
-
-    - name: Deploy loki operator
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ loki_operator_app_manifest }}"
-        state: present
-
-    - name: Deploy loki instance
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ loki_instance_app_manifest }}"
-        state: present
-
-    - name: Deploy coo
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ coo_app_manifest }}"
-        state: present
-
-    - name: Deploy logging instance
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ logging_instance_app_manifest }}"
-        state: present
-
-    # =========================================================================
-    # Phase 4 — Create Keycloak Argo CD Applications (Ansible path)
-    # Idempotent with App-of-Apps: same objects as keycloak/argoCD (synced by keycloak-apps).
-    # =========================================================================
-    - name: Deploy appkeycloak AppProject
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ keycloak_appproject_manifest }}"
-        state: present
-
-    - name: Deploy crunchy operator
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ crunchy_operator_app_manifest }}"
-        state: present
-
-    - name: Deploy rhbk operator
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ rhbk_operator_app_manifest }}"
-        state: present
-
-    - name: Deploy keycloak postgres instance
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ crunchy_instance_app_manifest }}"
-        state: present
-
-    - name: Deploy keycloak instance
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ keycloak_instance_app_manifest }}"
         state: present

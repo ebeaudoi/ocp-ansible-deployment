@@ -138,10 +138,11 @@ oc apply -f keycloak/argoCD/git-repository-secret.yaml
 ansible-playbook deploy-gitops-keycload.yaml
 ```
 
-Two equivalent ways to register Applications (both are idempotent):
+Ways to register Keycloak Applications:
 
-1. **App-of-Apps** — parent Application `keycloak-apps` (`gitops/app-of-apps/keycloak-apps.yaml`, project `cluster-config`) syncs `keycloak/argoCD` (AppProject + children). The root Application `cluster-apps` syncs `keycloak-apps` and `logging-apps`.
-2. **Ansible** — `deploy-gitops.yaml` / `deploy-gitops-keycload.yaml` apply `keycloak/argoCD/git-repository-secret.yaml` then the AppProject and Applications.
+1. **App-of-Apps (preferred)** — `deploy-gitops.yaml` installs GitOps, applies the Git repo Secret + `cluster-config` + `cluster-apps`. Argo then syncs `keycloak-apps` → `keycloak/argoCD` (AppProject + children).
+2. **Keycloak-only Ansible** — `deploy-gitops-keycload.yaml` still applies `keycloak/argoCD/*.yaml` directly (Git Secret, AppProject, Applications).
+3. **Manual** — apply App-of-Apps or `oc apply -k keycloak/argoCD`.
 
 Child Applications (sync waves keep operator CRs after operators):
 
@@ -155,20 +156,20 @@ Child Applications (sync waves keep operator CRs after operators):
 Instance apps use `SkipDryRunOnMissingResource` so they can retry until operator CRDs exist.
 
 ```bash
+# Full stack via App-of-Apps
 ansible-playbook deploy-gitops.yaml
+
+# Keycloak-only (Ansible applies child Applications)
+ansible-playbook deploy-gitops-keycload.yaml
 ```
 
-That playbook installs GitOps, applies App-of-Apps (`cluster-config` + `cluster-apps`), and still applies the Keycloak child Applications.
-
-Or apply GitOps objects only:
+Or apply GitOps parents only:
 
 ```bash
-# App-of-Apps (creates keycloak-apps, which syncs keycloak/argoCD)
+oc apply -f keycloak/argoCD/git-repository-secret.yaml
 oc apply -f gitops/app-of-apps/cluster-config-project.yaml
 oc apply -f gitops/app-of-apps/cluster-apps.yaml
-
-# Direct child Applications (Ansible path)
-oc apply -k keycloak/argoCD
+# Argo syncs keycloak-apps → keycloak/argoCD
 ```
 
 ## Manual deploy
