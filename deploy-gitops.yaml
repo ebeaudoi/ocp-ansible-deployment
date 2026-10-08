@@ -191,6 +191,7 @@
         path: "{{ git_ca_file }}"
       register: git_ca_stat
 
+    # HTTPS only — SSH repos use sshPrivateKey / insecureIgnoreHostKey in the Secret.
     - name: Derive git_tls_host from repository Secret URL
       when:
         - git_apply_ca | bool
@@ -203,7 +204,6 @@
             | regex_findall('(?m)^\\s*url:\\s*https?://([^/\\s]+)')
           }}
       ansible.builtin.set_fact:
-        # Prefer regex_findall (regex_search with '\\1' crashes on some Ansible versions)
         git_tls_host: "{{ _git_url_hosts[0] if (_git_url_hosts | length) > 0 else '' }}"
 
     - name: Apply Git CA to Argo CD argocd-tls-certs-cm

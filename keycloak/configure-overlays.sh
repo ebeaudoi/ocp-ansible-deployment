@@ -15,8 +15,12 @@
 #   - ../gitops/git-repository-secret.yaml  (applied by deploy-gitops.yaml)
 #   - argoCD/*-app-argo.yaml (repoURL / targetRevision)
 #   - argoCD/appkeycloak-project.yaml (sourceRepos)
+#   - ../gitops/app-of-apps/keycloak-apps.yaml (+ logging-apps, cluster-config)
 # Git CA file lives under gitops/git-ca.crt (collect with gitops/collect-git-ca.sh);
 # deploy-gitops.yaml inserts it into Argo CD after GitOps is ready.
+#
+# When invoked from ../configure-overlays.sh, GIT_REPO_URL / GIT_TARGET_REVISION
+# are inherited from the root HEADER via the environment.
 # =============================================================================
 
 set -euo pipefail
@@ -64,23 +68,25 @@ KEYCLOAK_TLS_SECRET="keycloak-tls-secret"
 GENERATE_TLS="true"
 TLS_DAYS_VALID="365"
 
-# --- Argo CD Git repository (self-signed / private Git) ---
-# Used by Application repoURL, AppProject sourceRepos, and git-repository-secret.
-GIT_REPO_URL="https://github.com/ebeaudoi/ocp-ansible-deployment.git"
-GIT_TARGET_REVISION="HEAD"
-# Optional credentials for private Git (leave empty for anonymous).
-GIT_USERNAME=""
-GIT_PASSWORD=""
-# true  => Argo CD skips Git TLS verify (typical for self-signed labs).
-# false => trust GIT_CA_FILE (deploy-gitops.yaml merges it into argocd-tls-certs-cm).
-GIT_TLS_INSECURE="true"
-# Path to PEM CA (collect with ./gitops/collect-git-ca.sh). Default under gitops/.
-GIT_CA_FILE="${GITOPS_DIR}/git-ca.crt"
-# Hostname key in argocd-tls-certs-cm (empty => parsed from GIT_REPO_URL).
-GIT_TLS_HOST=""
-# Optional: also patch argocd-tls-certs-cm from this script (normally false —
-# deploy-gitops.yaml Phase 1b applies the CA after GitOps is ready).
-GIT_APPLY_CA_TO_CLUSTER="false"
+# --- Argo CD Git repository (HTTPS or SSH with custom port) ---
+# Prefer env from root configure-overlays.sh when KEYCLOAK_ENABLED=true.
+# For SSH, the script ASKS for GIT_SSH_PORT and builds ssh://user@host:PORT/path.
+GIT_PROTOCOL="${GIT_PROTOCOL:-https}"
+GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/ebeaudoi/ocp-ansible-deployment.git}"
+GIT_TARGET_REVISION="${GIT_TARGET_REVISION:-HEAD}"
+GIT_SSH_USER="${GIT_SSH_USER:-git}"
+GIT_SSH_HOST="${GIT_SSH_HOST:-}"
+GIT_SSH_PORT="${GIT_SSH_PORT:-}"
+GIT_REPO_PATH="${GIT_REPO_PATH:-}"
+GIT_SSH_PRIVATE_KEY_FILE="${GIT_SSH_PRIVATE_KEY_FILE:-${HOME}/.ssh/id_ed25519}"
+GIT_SSH_INSECURE_IGNORE_HOST_KEY="${GIT_SSH_INSECURE_IGNORE_HOST_KEY:-true}"
+# HTTPS
+GIT_USERNAME="${GIT_USERNAME:-}"
+GIT_PASSWORD="${GIT_PASSWORD:-}"
+GIT_TLS_INSECURE="${GIT_TLS_INSECURE:-true}"
+GIT_CA_FILE="${GIT_CA_FILE:-${GITOPS_DIR}/git-ca.crt}"
+GIT_TLS_HOST="${GIT_TLS_HOST:-}"
+GIT_APPLY_CA_TO_CLUSTER="${GIT_APPLY_CA_TO_CLUSTER:-false}"
 KUBECONFIG_PATH="${HOME}/ocpkubeconfig"
 
 # =============================================================================
@@ -98,6 +104,12 @@ KEYCLOAK_INSTANCE_KUSTOMIZATION=""
 GENERATE_TLS_SCRIPT=""
 GIT_REPO_SECRET="${GITOPS_DIR}/git-repository-secret.yaml"
 APPKEYCLOAK_PROJECT="${ARGOCD_DIR}/appkeycloak-project.yaml"
+APP_OF_APPS_DIR="${GITOPS_DIR}/app-of-apps"
+CLUSTER_CONFIG_PROJECT="${APP_OF_APPS_DIR}/cluster-config-project.yaml"
+
+# Shared SSH/HTTPS Argo CD helpers (prompt SSH port, write Secret, normalize URL).
+# shellcheck source=../gitops/git-configure-lib.sh
+source "${GITOPS_DIR}/git-configure-lib.sh"
 
 # =============================================================================
 # Helpers
@@ -122,14 +134,12 @@ resolve_keycloak_params() {
   : "${KEYCLOAK_TLS_SECRET:?KEYCLOAK_TLS_SECRET is required}"
   : "${GENERATE_TLS:?GENERATE_TLS is required}"
   : "${TLS_DAYS_VALID:?TLS_DAYS_VALID is required}"
-  : "${GIT_REPO_URL:?GIT_REPO_URL is required}"
-  : "${GIT_TARGET_REVISION:?GIT_TARGET_REVISION is required}"
-  : "${GIT_TLS_INSECURE:?GIT_TLS_INSECURE is required}"
   normalize_keycloak_hostname
+  resolve_git_repo_settings
   if [[ -z "${GIT_TLS_HOST}" ]]; then
     GIT_TLS_HOST="$(git_host_from_url "${GIT_REPO_URL}")"
   fi
-  if [[ "${GIT_TLS_INSECURE}" != "true" && -n "${GIT_CA_FILE}" && ! -f "${GIT_CA_FILE}" ]]; then
+  if [[ "${GIT_PROTOCOL}" == "https" && "${GIT_TLS_INSECURE}" != "true" && -n "${GIT_CA_FILE}" && ! -f "${GIT_CA_FILE}" ]]; then
     echo "ERROR: GIT_CA_FILE not found: ${GIT_CA_FILE}" >&2
     exit 1
   fi
@@ -152,14 +162,6 @@ normalize_keycloak_hostname() {
   if [[ "${raw}" != "${KEYCLOAK_HOSTNAME}" ]]; then
     echo "Normalized KEYCLOAK_HOSTNAME: '${raw}' -> '${KEYCLOAK_HOSTNAME}'"
   fi
-}
-
-git_host_from_url() {
-  local url="$1"
-  # Strip scheme and path: https://host[:port]/path -> host[:port]
-  url="${url#https://}"
-  url="${url#http://}"
-  printf '%s' "${url%%/*}"
 }
 
 set_keycloak_overlay_paths() {
@@ -414,58 +416,74 @@ configure_keycloak_overlay() {
 # Argo CD Git (self-signed / private)
 # =============================================================================
 
-write_git_repository_secret() {
-  mkdir -p "$(dirname "${GIT_REPO_SECRET}")"
-  cat > "${GIT_REPO_SECRET}" <<EOF
-# Argo CD repository credentials for App-of-Apps (logging-apps + keycloak-apps).
-# Generated/updated by keycloak/configure-overlays.sh (GIT_* HEADER values).
-# Applied by deploy-gitops.yaml immediately after OpenShift GitOps is ready.
-# Required when the Git server uses a self-signed certificate or needs auth.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: git-repo
-  namespace: openshift-gitops
-  labels:
-    argocd.argoproj.io/secret-type: repository
-stringData:
-  type: git
-  name: git-repo
-  url: ${GIT_REPO_URL}
-  insecure: "${GIT_TLS_INSECURE}"
-  username: "${GIT_USERNAME}"
-  password: "${GIT_PASSWORD}"
-EOF
-  echo "Updated ${GIT_REPO_SECRET}"
-}
-
-write_argocd_repo_urls() {
-  local app
-  for app in \
-    "${ARGOCD_DIR}/crunchy-operator-app-argo.yaml" \
-    "${ARGOCD_DIR}/rhbk-operator-app-argo.yaml" \
-    "${ARGOCD_DIR}/crunchy-instance-app-argo.yaml" \
-    "${ARGOCD_DIR}/keycloak-instance-app-argo.yaml"
-  do
-    # Portable in-place edit without relying on GNU sed -i differences.
-    python3 - "${app}" "${GIT_REPO_URL}" "${GIT_TARGET_REVISION}" <<'PY'
+update_repo_url_and_revision() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    echo "WARNING: skip missing Argo CD file: ${file}" >&2
+    return 0
+  fi
+  python3 - "${file}" "${GIT_REPO_URL}" "${GIT_TARGET_REVISION}" <<'PY'
 import pathlib, sys
 path, url, rev = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 text = path.read_text()
 out = []
 for line in text.splitlines(keepends=True):
-    if line.lstrip().startswith("repoURL:"):
-        indent = line[: len(line) - len(line.lstrip())]
+    stripped = line.lstrip()
+    indent = line[: len(line) - len(stripped)]
+    if stripped.startswith("repoURL:"):
         out.append(f"{indent}repoURL: {url}\n")
-    elif line.lstrip().startswith("targetRevision:"):
-        indent = line[: len(line) - len(line.lstrip())]
+    elif stripped.startswith("targetRevision:"):
         out.append(f"{indent}targetRevision: {rev}\n")
     else:
         out.append(line)
 path.write_text("".join(out))
 print(f"Updated {path}")
 PY
+}
+
+write_source_repos_entry() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    echo "WARNING: skip missing AppProject: ${file}" >&2
+    return 0
+  fi
+  python3 - "${file}" "${GIT_REPO_URL}" <<'PY'
+import pathlib, sys, re
+path, url = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+new, n = re.subn(
+    r"(sourceRepos:\n\s*-\s+)\S+",
+    rf"\g<1>{url}",
+    text,
+    count=1,
+)
+if n == 0:
+    raise SystemExit(f"ERROR: could not find sourceRepos in {path}")
+path.write_text(new)
+print(f"Updated {path} sourceRepos -> {url}")
+PY
+}
+
+write_argocd_repo_urls() {
+  local app
+  local logging_argocd="${REPO_ROOT}/logging/argoCD"
+  # Rewrite every Application repoURL/targetRevision in the repo (Keycloak + logging + roots).
+  for app in \
+    "${ARGOCD_DIR}/crunchy-operator-app-argo.yaml" \
+    "${ARGOCD_DIR}/rhbk-operator-app-argo.yaml" \
+    "${ARGOCD_DIR}/crunchy-instance-app-argo.yaml" \
+    "${ARGOCD_DIR}/keycloak-instance-app-argo.yaml" \
+    "${APP_OF_APPS_DIR}/keycloak-apps.yaml" \
+    "${APP_OF_APPS_DIR}/logging-apps.yaml" \
+    "${logging_argocd}/loggingoperator-app-argo.yaml" \
+    "${logging_argocd}/lokioperator-app-argo.yaml" \
+    "${logging_argocd}/loki-instance-app-argo.yaml" \
+    "${logging_argocd}/coo-app-argo.yaml" \
+    "${logging_argocd}/logginginstance-app-argo.yaml"
+  do
+    update_repo_url_and_revision "${app}"
   done
+  write_source_repos_entry "${logging_argocd}/applogging-project.yaml"
 }
 
 write_appkeycloak_project() {
@@ -535,19 +553,29 @@ apply_git_ca_to_cluster() {
 
 configure_argocd_git() {
   echo
-  echo "=== Argo CD Git repository (self-signed / private) ==="
+  echo "=== Argo CD Git repository (HTTPS or SSH) ==="
+  echo "  GIT_PROTOCOL=${GIT_PROTOCOL}"
   echo "  GIT_REPO_URL=${GIT_REPO_URL}"
   echo "  GIT_TARGET_REVISION=${GIT_TARGET_REVISION}"
-  echo "  GIT_TLS_INSECURE=${GIT_TLS_INSECURE}"
-  echo "  GIT_TLS_HOST=${GIT_TLS_HOST}"
-  echo "  GIT_CA_FILE=${GIT_CA_FILE:-<none>}"
-  echo "  GIT_APPLY_CA_TO_CLUSTER=${GIT_APPLY_CA_TO_CLUSTER}"
+  if [[ "${GIT_PROTOCOL}" == "ssh" ]]; then
+    echo "  GIT_SSH_PORT=${GIT_SSH_PORT}"
+    echo "  GIT_SSH_PRIVATE_KEY_FILE=${GIT_SSH_PRIVATE_KEY_FILE}"
+    echo "  GIT_SSH_INSECURE_IGNORE_HOST_KEY=${GIT_SSH_INSECURE_IGNORE_HOST_KEY}"
+  else
+    echo "  GIT_TLS_INSECURE=${GIT_TLS_INSECURE}"
+    echo "  GIT_TLS_HOST=${GIT_TLS_HOST}"
+    echo "  GIT_CA_FILE=${GIT_CA_FILE:-<none>}"
+    echo "  GIT_APPLY_CA_TO_CLUSTER=${GIT_APPLY_CA_TO_CLUSTER}"
+  fi
 
   write_git_repository_secret
   write_argocd_repo_urls
   write_appkeycloak_project
-  # CA is normally applied by deploy-gitops.yaml Phase 1b (not this script).
-  apply_git_ca_to_cluster
+  write_source_repos_entry "${CLUSTER_CONFIG_PROJECT}"
+  # HTTPS CA only; SSH uses sshPrivateKey + insecureIgnoreHostKey in the Secret.
+  if [[ "${GIT_PROTOCOL}" == "https" ]]; then
+    apply_git_ca_to_cluster
+  fi
 }
 
 # =============================================================================

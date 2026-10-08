@@ -293,14 +293,16 @@ Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiser
 Set lab values in the script HEADER, then run the script (preferred), or edit the patch files directly.
 
 ```bash
-# 1. Edit HEADER in configure-overlays.sh (logging / S4 / Loki)
-#    and keycloak/configure-overlays.sh (Keycloak)
+# 1. Edit HEADER in configure-overlays.sh (logging / S4 / Loki / GIT_REPO_URL)
+#    and keycloak/configure-overlays.sh (Keycloak; inherits GIT_* from root when delegated)
 #    - S4_ENABLED / S4_DEPLOYED_ON_CLUSTER / KEYCLOAK_ENABLED
 #    - S4_API_HOST, credentials, Loki bucket/endpoint/storageClass/placement
+#    - GIT_REPO_URL / GIT_TARGET_REVISION / GIT_TLS_* (updates all Argo Git URLs
+#      including gitops/git-repository-secret.yaml)
 # 2. Run (root also calls keycloak/configure-overlays.sh when KEYCLOAK_ENABLED=true):
 ./configure-overlays.sh
 
-# Keycloak overlays only:
+# Keycloak overlays only (also rewrites keycloak/argoCD + gitops App-of-Apps Git URLs):
 ./keycloak/configure-overlays.sh
 ```
 
@@ -412,31 +414,45 @@ Pods stay `Pending` until nodes match the overlay’s selector and tolerations.
 
 ---
 
-## Git with self-signed TLS
+## Git repository (HTTPS or SSH)
 
-If Argo CD cannot fetch the repo (`x509: certificate signed by unknown authority`), configure Git under [`gitops/`](gitops/) and in [`keycloak/configure-overlays.sh`](keycloak/configure-overlays.sh) `GIT_*` HEADER values.
+Configure Git in [`configure-overlays.sh`](configure-overlays.sh) / [`keycloak/configure-overlays.sh`](keycloak/configure-overlays.sh). Shared logic lives in [`gitops/git-configure-lib.sh`](gitops/git-configure-lib.sh). Both scripts rewrite Application `repoURL`s and always regenerate [`gitops/git-repository-secret.yaml`](gitops/git-repository-secret.yaml).
 
-**Collect the Git CA** (issuer preferred; leaf if the cert is self-signed):
+### SSH (custom port)
+
+Argo CD requires `ssh://user@host:PORT/path.git` when Git does not use port 22. The configure scripts **ask for the SSH Git port** interactively, then build that URL.
 
 ```bash
-# From repo root — writes gitops/git-ca.crt by default
-./gitops/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
+# In configure-overlays.sh HEADER (example):
+GIT_PROTOCOL=ssh
+GIT_SSH_HOST=git.example.com
+GIT_REPO_PATH=org/ocp-ansible-deployment.git
+GIT_SSH_PRIVATE_KEY_FILE=$HOME/.ssh/id_ed25519
+# GIT_SSH_PORT is prompted when you run the script (or set it for non-interactive runs)
 
-# Or host / host:port, custom output path
-./gitops/collect-git-ca.sh git.example.com:8443 -o gitops/git-ca.crt
+./configure-overlays.sh
+# → prompts: Enter SSH Git port [22]:
+# → writes url: ssh://git@git.example.com:PORT/org/ocp-ansible-deployment.git
+# → embeds sshPrivateKey from GIT_SSH_PRIVATE_KEY_FILE
 ```
 
-Then choose a mode and re-run the overlay script (rewrites `gitops/git-repository-secret.yaml`):
-
-1. **Lab (skip verify):** set `GIT_TLS_INSECURE=true` in `keycloak/configure-overlays.sh`.
-2. **Trust CA:** set `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=gitops/git-ca.crt`, and `GIT_REPO_URL`.
+Then push and redeploy:
 
 ```bash
-./keycloak/configure-overlays.sh
-# deploy-gitops.yaml applies the Secret + CA (Phase 1b) right after GitOps, then App-of-Apps:
-ansible-playbook deploy-gitops.yaml
-# Or Keycloak only (App-of-Apps):
 ansible-playbook deploy-gitops-keycloak.yaml
+# or full stack:
+ansible-playbook deploy-gitops.yaml
+```
+
+### HTTPS (self-signed TLS)
+
+If Argo CD fails with `x509: certificate signed by unknown authority`:
+
+```bash
+./gitops/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
+# HEADER: GIT_PROTOCOL=https, GIT_TLS_INSECURE=false, GIT_CA_FILE=gitops/git-ca.crt
+./configure-overlays.sh
+ansible-playbook deploy-gitops.yaml
 ```
 
 Details: [`keycloak/README.md`](keycloak/README.md#self-signed-git-tls).

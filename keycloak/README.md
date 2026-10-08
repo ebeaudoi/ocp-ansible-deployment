@@ -75,32 +75,32 @@ Edit HEADER / lab patches, run `./keycloak/configure-overlays.sh`, commit/push f
 
 Keycloak children live in the default **`openshift-gitops`** Argo CD instance, under AppProject **`appkeycloak`**.
 
-### Self-signed Git TLS
+### Git (HTTPS or SSH)
 
-If Argo CD fails with `tls: failed to verify certificate: x509: certificate signed by unknown authority`:
+Shared helpers: [`../gitops/git-configure-lib.sh`](../gitops/git-configure-lib.sh). Scripts rewrite Application `repoURL`s and always regenerate [`../gitops/git-repository-secret.yaml`](../gitops/git-repository-secret.yaml).
 
-**1. Collect the Git server CA** with [`../gitops/collect-git-ca.sh`](../gitops/collect-git-ca.sh) (writes `gitops/git-ca.crt` by default):
+**SSH with a custom port** (Argo CD needs `ssh://user@host:PORT/path.git`):
 
 ```bash
-# From repo root
-./gitops/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
-./gitops/collect-git-ca.sh git.example.com:8443 -o gitops/git-ca.crt
+# HEADER in configure-overlays.sh / keycloak/configure-overlays.sh
+GIT_PROTOCOL=ssh
+GIT_SSH_HOST=git.example.com
+GIT_REPO_PATH=org/ocp-ansible-deployment.git
+GIT_SSH_PRIVATE_KEY_FILE=$HOME/.ssh/id_ed25519
+
+./keycloak/configure-overlays.sh
+# Prompts: Enter SSH Git port [22]:
+# Writes url: ssh://git@git.example.com:PORT/... + sshPrivateKey
+
+ansible-playbook deploy-gitops-keycloak.yaml
 ```
 
-**2. Configure Git** in [`configure-overlays.sh`](configure-overlays.sh) **HEADER** (`GIT_*`), then re-run:
-
-| Mode | HEADER | What it does |
-|------|--------|--------------|
-| Lab (skip verify) | `GIT_TLS_INSECURE=true` | Writes `gitops/git-repository-secret.yaml` with `insecure: "true"` |
-| Trust CA | `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=gitops/git-ca.crt` | Secret uses verify; `deploy-gitops.yaml` merges CA into `argocd-tls-certs-cm` |
-
-Also set `GIT_REPO_URL` (and optional `GIT_USERNAME` / `GIT_PASSWORD`) so Application `repoURL`, AppProject `sourceRepos`, and the repository Secret match your Git server.
+**HTTPS self-signed TLS** — if Argo CD fails with `x509: certificate signed by unknown authority`:
 
 ```bash
+./gitops/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
+# HEADER: GIT_PROTOCOL=https, GIT_TLS_INSECURE=false, GIT_CA_FILE=gitops/git-ca.crt
 ./keycloak/configure-overlays.sh
-# Phase 1b applies gitops/git-repository-secret.yaml + git-ca.crt after GitOps:
-ansible-playbook deploy-gitops.yaml
-# Or GitOps + Keycloak only (App-of-Apps, no logging):
 ansible-playbook deploy-gitops-keycloak.yaml
 ```
 

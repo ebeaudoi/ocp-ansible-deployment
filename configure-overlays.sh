@@ -21,6 +21,12 @@
 #   5) s4/overlays/lab/s4-route-s3-patch.yaml  (spec.host; when S4_ENABLED=true)
 #   6) s4/overlays/lab/s4-secret-patch.yaml    (AWS_* + UI_*; when S4_ENABLED=true)
 #
+# Also rewrites Argo CD Git URLs (GIT_REPO_URL / GIT_TARGET_REVISION):
+#   - logging/argoCD/*-app-argo.yaml
+#   - logging/argoCD/applogging-project.yaml
+#   - gitops/app-of-apps/{logging-apps,keycloak-apps,cluster-config-project}.yaml
+#   - gitops/git-repository-secret.yaml (url: line, if present)
+#
 # Note: logging/coo/base/coo-uiplugin-patcher*.yaml are ClusterRole(Binding)
 # resources named "patcher", not kustomize overlay patches — not managed here.
 # =============================================================================
@@ -30,6 +36,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
 KEYCLOAK_CONFIGURE_SCRIPT="${REPO_ROOT}/keycloak/configure-overlays.sh"
+LOGGING_ARGOCD_DIR="${REPO_ROOT}/logging/argoCD"
+APP_OF_APPS_DIR="${REPO_ROOT}/gitops/app-of-apps"
+GITOPS_DIR="${REPO_ROOT}/gitops"
 
 # =============================================================================
 # HEADER — edit these values for your lab / cluster
@@ -96,6 +105,25 @@ KUBECONFIG_PATH="${HOME}/ocpkubeconfig"
 S4_NAMESPACE="s4"
 S4_API_ROUTE_NAME="s4-api"   # OpenShift Route object name (not the hostname)
 
+# --- Argo CD Git repository (all App-of-Apps + gitops/git-repository-secret.yaml) ---
+# Exported to keycloak/configure-overlays.sh when KEYCLOAK_ENABLED=true.
+# GIT_PROTOCOL=https|ssh. For SSH, the script ASKS for GIT_SSH_PORT and builds
+#   ssh://git@HOST:PORT/ORG/REPO.git  (required by Argo CD for non-22 ports).
+GIT_PROTOCOL="${GIT_PROTOCOL:-https}"
+GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/ebeaudoi/ocp-ansible-deployment.git}"
+GIT_TARGET_REVISION="${GIT_TARGET_REVISION:-HEAD}"
+# SSH (used when GIT_PROTOCOL=ssh; host/path can be parsed from GIT_REPO_URL)
+GIT_SSH_USER="${GIT_SSH_USER:-git}"
+GIT_SSH_HOST="${GIT_SSH_HOST:-}"
+GIT_SSH_PORT="${GIT_SSH_PORT:-}"                 # prompted interactively if empty
+GIT_REPO_PATH="${GIT_REPO_PATH:-}"               # e.g. org/ocp-ansible-deployment.git
+GIT_SSH_PRIVATE_KEY_FILE="${GIT_SSH_PRIVATE_KEY_FILE:-${HOME}/.ssh/id_ed25519}"
+GIT_SSH_INSECURE_IGNORE_HOST_KEY="${GIT_SSH_INSECURE_IGNORE_HOST_KEY:-true}"
+# HTTPS
+GIT_TLS_INSECURE="${GIT_TLS_INSECURE:-true}"
+GIT_USERNAME="${GIT_USERNAME:-}"
+GIT_PASSWORD="${GIT_PASSWORD:-}"
+
 # =============================================================================
 # Paths (normally leave as-is)
 # =============================================================================
@@ -106,6 +134,13 @@ LOKI_STORAGE_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-
 LOKI_CR_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml"
 LOKI_PLACEMENT_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml"
 LOKI_CA_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml"
+APPLOGGING_PROJECT="${LOGGING_ARGOCD_DIR}/applogging-project.yaml"
+CLUSTER_CONFIG_PROJECT="${APP_OF_APPS_DIR}/cluster-config-project.yaml"
+GIT_REPO_SECRET="${GITOPS_DIR}/git-repository-secret.yaml"
+
+# Shared SSH/HTTPS Argo CD helpers (prompt SSH port, write Secret, normalize URL).
+# shellcheck source=gitops/git-configure-lib.sh
+source "${GITOPS_DIR}/git-configure-lib.sh"
 
 # =============================================================================
 # Helpers
@@ -160,6 +195,98 @@ EOF
           operator: Exists
 EOF
   fi
+}
+
+# =============================================================================
+# Argo CD Git URL helpers
+# =============================================================================
+
+update_repo_url_and_revision() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    echo "WARNING: skip missing Argo CD file: ${file}" >&2
+    return 0
+  fi
+  python3 - "${file}" "${GIT_REPO_URL}" "${GIT_TARGET_REVISION}" <<'PY'
+import pathlib, sys
+path, url, rev = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+text = path.read_text()
+out = []
+for line in text.splitlines(keepends=True):
+    stripped = line.lstrip()
+    indent = line[: len(line) - len(stripped)]
+    if stripped.startswith("repoURL:"):
+        out.append(f"{indent}repoURL: {url}\n")
+    elif stripped.startswith("targetRevision:"):
+        out.append(f"{indent}targetRevision: {rev}\n")
+    elif stripped.startswith("url:") and "stringData" in text:
+        # git-repository-secret.yaml stringData.url
+        out.append(f"{indent}url: {url}\n")
+    else:
+        out.append(line)
+path.write_text("".join(out))
+print(f"Updated {path}")
+PY
+}
+
+write_source_repos_project() {
+  # Rewrite first sourceRepos entry (list item "- <url>") under spec.
+  local file="$1"
+  local description="$2"
+  if [[ ! -f "${file}" ]]; then
+    echo "WARNING: skip missing AppProject: ${file}" >&2
+    return 0
+  fi
+  python3 - "${file}" "${GIT_REPO_URL}" <<'PY'
+import pathlib, sys, re
+path, url = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+# Replace the first sourceRepos list entry only.
+new, n = re.subn(
+    r"(sourceRepos:\n\s*-\s+)\S+",
+    rf"\g<1>{url}",
+    text,
+    count=1,
+)
+if n == 0:
+    raise SystemExit(f"ERROR: could not find sourceRepos in {path}")
+path.write_text(new)
+print(f"Updated {path} sourceRepos -> {url}")
+PY
+}
+
+configure_logging_argocd_git() {
+  echo
+  echo "=== Argo CD Git repository (logging + App-of-Apps + Secret) ==="
+  resolve_git_repo_settings
+  echo "  GIT_PROTOCOL=${GIT_PROTOCOL}"
+  echo "  GIT_REPO_URL=${GIT_REPO_URL}"
+  echo "  GIT_TARGET_REVISION=${GIT_TARGET_REVISION}"
+  if [[ "${GIT_PROTOCOL}" == "ssh" ]]; then
+    echo "  GIT_SSH_PORT=${GIT_SSH_PORT}"
+    echo "  GIT_SSH_PRIVATE_KEY_FILE=${GIT_SSH_PRIVATE_KEY_FILE}"
+  else
+    echo "  GIT_TLS_INSECURE=${GIT_TLS_INSECURE}"
+  fi
+
+  # Always rewrite the shared Secret (HTTPS or SSH with port in url).
+  write_git_repository_secret
+
+  local app
+  for app in \
+    "${LOGGING_ARGOCD_DIR}/loggingoperator-app-argo.yaml" \
+    "${LOGGING_ARGOCD_DIR}/lokioperator-app-argo.yaml" \
+    "${LOGGING_ARGOCD_DIR}/loki-instance-app-argo.yaml" \
+    "${LOGGING_ARGOCD_DIR}/coo-app-argo.yaml" \
+    "${LOGGING_ARGOCD_DIR}/logginginstance-app-argo.yaml" \
+    "${APP_OF_APPS_DIR}/logging-apps.yaml" \
+    "${APP_OF_APPS_DIR}/keycloak-apps.yaml"
+  do
+    update_repo_url_and_revision "${app}"
+  done
+
+  write_source_repos_project "${APPLOGGING_PROJECT}" "applogging"
+  write_source_repos_project "${CLUSTER_CONFIG_PROJECT}" "cluster-config"
 }
 
 # =============================================================================
@@ -401,8 +528,14 @@ main() {
   echo "  S4_ENABLED=${S4_ENABLED}"
   echo "  S4_DEPLOYED_ON_CLUSTER=${S4_DEPLOYED_ON_CLUSTER}"
   echo "  KEYCLOAK_ENABLED=${KEYCLOAK_ENABLED}"
+  echo "  GIT_PROTOCOL=${GIT_PROTOCOL}"
+  echo "  GIT_REPO_URL=${GIT_REPO_URL}"
+  echo "  GIT_TARGET_REVISION=${GIT_TARGET_REVISION}"
+
+  : "${GIT_TARGET_REVISION:?GIT_TARGET_REVISION is required}"
 
   configure_logging_overlays
+  configure_logging_argocd_git
 
   if [[ "${KEYCLOAK_ENABLED}" == "true" ]]; then
     echo
@@ -410,6 +543,12 @@ main() {
     if [[ ! -x "${KEYCLOAK_CONFIGURE_SCRIPT}" ]]; then
       chmod +x "${KEYCLOAK_CONFIGURE_SCRIPT}"
     fi
+    # Keep Keycloak Argo CD manifests on the same Git settings (skip second SSH port prompt).
+    export GIT_PROTOCOL GIT_REPO_URL GIT_TARGET_REVISION \
+      GIT_SSH_USER GIT_SSH_HOST GIT_SSH_PORT GIT_REPO_PATH \
+      GIT_SSH_PRIVATE_KEY_FILE GIT_SSH_INSECURE_IGNORE_HOST_KEY \
+      GIT_TLS_INSECURE GIT_USERNAME GIT_PASSWORD \
+      GIT_SKIP_SSH_PORT_PROMPT=true
     "${KEYCLOAK_CONFIGURE_SCRIPT}"
   else
     echo
