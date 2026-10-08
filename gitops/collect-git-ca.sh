@@ -92,7 +92,7 @@ select_ca_pem() {
   local chain="$1"
   local tmp_dir leaf issuer
 
-  tmp_dir="$(mktemp -d)"
+  tmp_dir="$(mktemp -d "${HOME}/.ocp-ansible-git-ca.XXXXXX")"
   awk -v out="${tmp_dir}" '
     /BEGIN CERTIFICATE/ { n++; f=sprintf("%s/cert-%d.pem", out, n-1); }
     { print > f }

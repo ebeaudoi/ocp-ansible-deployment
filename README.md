@@ -365,7 +365,7 @@ echo | openssl s_client -showcerts \
   -servername <S4_API_HOST> \
   -connect <S4_API_HOST>:443 \
   2>/dev/null \
-| sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > /tmp/s4-chain.pem
+| sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > "$HOME/s4-chain.pem"
 ```
 
 Use the **issuer/CA** cert (not only the leaf) in the ConfigMap/patch. Prefer regenerating via `configure-overlays.sh` with `S4_DEPLOYED_ON_CLUSTER=true` after S4 is up.

@@ -295,7 +295,7 @@ fetch_s4_ca_pem() {
     exit 1
   fi
 
-  tmp_dir="$(mktemp -d)"
+  tmp_dir="$(mktemp -d "${HOME}/.ocp-ansible-s4-ca.XXXXXX")"
   # Split chain into cert-0.pem, cert-1.pem, ...
   awk -v out="${tmp_dir}" '
     /BEGIN CERTIFICATE/ { n++; f=sprintf("%s/cert-%d.pem", out, n-1); }
