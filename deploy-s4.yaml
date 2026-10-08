@@ -3,7 +3,7 @@
   hosts: localhost
   gather_facts: false
   vars:
-    kubeconfig_path: "/tmp/ocpkubeconfig"
+    kubeconfig_path: "{{ lookup('env', 'HOME') }}/ocpkubeconfig"
     repo_root: "{{ playbook_dir }}"
     s4_namespace: s4
     s4_bucket_name: loggingstack

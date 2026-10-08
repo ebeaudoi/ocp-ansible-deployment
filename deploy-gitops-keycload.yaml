@@ -4,13 +4,14 @@
   gather_facts: false
   vars:
     # --- Cluster access ---
-    kubeconfig_path: "/tmp/ocpkubeconfig"
+    kubeconfig_path: "{{ lookup('env', 'HOME') }}/ocpkubeconfig"
     verify_ssl: false
     # ocp_token: "sha256~..."   # oc whoami --show-token
     # ansible_python_interpreter: "/usr/bin/python3"
 
     # --- Paths ---
     repo_root: "{{ playbook_dir }}"
+    gitops_dir: "{{ repo_root }}/gitops"
     keycloak_argocd_dir: "{{ repo_root }}/keycloak/argoCD"
 
     # --- OpenShift GitOps operator (OLM) ---
@@ -39,8 +40,13 @@
     argocd_instance_retries: 40
     argocd_instance_delay: 10
 
+    # --- Git repository access (applied after GitOps is ready) ---
+    git_repo_secret_manifest: "{{ gitops_dir }}/git-repository-secret.yaml"
+    git_ca_file: "{{ gitops_dir }}/git-ca.crt"
+    git_apply_ca: true
+    git_tls_host: ""
+
     # --- Keycloak Argo CD manifests ---
-    keycloak_git_repo_secret_manifest: "{{ keycloak_argocd_dir }}/git-repository-secret.yaml"
     keycloak_appproject_manifest: "{{ keycloak_argocd_dir }}/appkeycloak-project.yaml"
     crunchy_operator_app_manifest: "{{ keycloak_argocd_dir }}/crunchy-operator-app-argo.yaml"
     rhbk_operator_app_manifest: "{{ keycloak_argocd_dir }}/rhbk-operator-app-argo.yaml"
@@ -157,15 +163,63 @@
       retries: "{{ argocd_instance_retries }}"
       delay: "{{ argocd_instance_delay }}"
 
-    # --- Keycloak Argo CD project + Applications ---
-    # git-repository-secret must exist first so Argo CD can fetch a self-signed / private Git URL.
+    # --- Git repository access (right after GitOps), then Keycloak Applications ---
 
-    - name: Deploy Keycloak Git repository Secret (self-signed / private Git)
+    - name: Deploy Git repository Secret (self-signed / private Git)
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         verify_ssl: "{{ verify_ssl }}"
-        src: "{{ keycloak_git_repo_secret_manifest }}"
+        src: "{{ git_repo_secret_manifest }}"
         state: present
+
+    - name: Check for Git CA certificate file
+      ansible.builtin.stat:
+        path: "{{ git_ca_file }}"
+      register: git_ca_stat
+
+    - name: Derive git_tls_host from repository Secret URL
+      when:
+        - git_apply_ca | bool
+        - git_ca_stat.stat.exists
+        - (git_tls_host | default('') | length) == 0
+      ansible.builtin.set_fact:
+        git_tls_host: >-
+          {{
+            lookup('file', git_repo_secret_manifest)
+            | regex_search('url:\\s*https?://([^/\\s]+)', '\\1')
+          }}
+
+    - name: Apply Git CA to Argo CD argocd-tls-certs-cm
+      when:
+        - git_apply_ca | bool
+        - git_ca_stat.stat.exists
+        - (git_tls_host | default('') | length) > 0
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc --kubeconfig "{{ kubeconfig_path }}" -n "{{ argocd_namespace }}" \
+          create configmap argocd-tls-certs-cm \
+          --from-file="{{ git_tls_host }}={{ git_ca_file }}" \
+          --dry-run=client -o yaml \
+        | oc --kubeconfig "{{ kubeconfig_path }}" apply -f -
+        oc --kubeconfig "{{ kubeconfig_path }}" -n "{{ argocd_namespace }}" \
+          label configmap argocd-tls-certs-cm \
+          app.kubernetes.io/name=argocd-tls-certs-cm \
+          app.kubernetes.io/part-of=argocd \
+          --overwrite
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Restart Argo CD repo-server to pick up Git TLS CAs
+      when:
+        - git_apply_ca | bool
+        - git_ca_stat.stat.exists
+        - (git_tls_host | default('') | length) > 0
+      ansible.builtin.command: >
+        oc --kubeconfig {{ kubeconfig_path }}
+        -n {{ argocd_namespace }}
+        rollout restart deployment/openshift-gitops-repo-server
+      changed_when: true
 
     - name: Deploy appkeycloak AppProject
       kubernetes.core.k8s:

@@ -4,12 +4,12 @@
 #
 # Fetch the TLS certificate chain from a self-signed (or privately CA-signed)
 # Git HTTPS server and write a PEM suitable for Argo CD (GIT_CA_FILE /
-# argocd-tls-certs-cm).
+# argocd-tls-certs-cm). deploy-gitops.yaml applies this file after GitOps is ready.
 #
-# Usage (from repo root or keycloak/):
-#   ./keycloak/collect-git-ca.sh https://git.example.com/org/repo.git
-#   ./keycloak/collect-git-ca.sh git.example.com
-#   ./keycloak/collect-git-ca.sh git.example.com:8443 -o /tmp/git-ca.pem
+# Usage (from repo root):
+#   ./gitops/collect-git-ca.sh https://git.example.com/org/repo.git
+#   ./gitops/collect-git-ca.sh git.example.com
+#   ./gitops/collect-git-ca.sh git.example.com:8443 -o gitops/git-ca.crt
 #
 # Prefers the issuer/CA cert from the chain (not only the leaf). If the server
 # returns a single self-signed cert, that cert is used.
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_OUT="${SCRIPT_DIR}/argoCD/git-ca.crt"
+DEFAULT_OUT="${SCRIPT_DIR}/git-ca.crt"
 
 usage() {
   cat <<EOF
@@ -27,7 +27,7 @@ Usage: $(basename "$0") <git-url-or-host[:port]> [-o <output.pem>]
 Examples:
   $(basename "$0") https://git.lab.example.com/org/ocp-ansible-deployment.git
   $(basename "$0") git.lab.example.com
-  $(basename "$0") git.lab.example.com:8443 -o keycloak/argoCD/git-ca.crt
+  $(basename "$0") git.lab.example.com:8443 -o gitops/git-ca.crt
 
 Default output: ${DEFAULT_OUT}
 EOF
@@ -43,7 +43,6 @@ parse_host_port() {
   hostport="${rest}"
 
   if [[ "${hostport}" == \[*\]* ]]; then
-    # Rare IPv6 form [addr]:port — keep simple host:port parsing for labs.
     echo "ERROR: IPv6 hosts are not supported by this helper; pass hostname:port" >&2
     exit 1
   fi
@@ -94,7 +93,6 @@ select_ca_pem() {
   local tmp_dir leaf issuer
 
   tmp_dir="$(mktemp -d)"
-  # Split chain into cert-0.pem, cert-1.pem, ...
   awk -v out="${tmp_dir}" '
     /BEGIN CERTIFICATE/ { n++; f=sprintf("%s/cert-%d.pem", out, n-1); }
     { print > f }
@@ -168,9 +166,9 @@ main() {
   echo "       GIT_REPO_URL=https://${GIT_HOST}/<org>/<repo>.git"
   echo "       GIT_TLS_INSECURE=false"
   echo "       GIT_CA_FILE=${out}"
-  echo "       GIT_APPLY_CA_TO_CLUSTER=true"
   echo "  2) Run: ./keycloak/configure-overlays.sh"
-  echo "  3) Deploy: ansible-playbook deploy-gitops-keycload.yaml"
+  echo "  3) Deploy: ansible-playbook deploy-gitops.yaml"
+  echo "     (applies gitops/git-repository-secret.yaml and git-ca.crt after GitOps is ready)"
 }
 
 main "$@"

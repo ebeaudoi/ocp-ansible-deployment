@@ -6,29 +6,29 @@
 #   - Blocking CRs (LokiStack, ClusterLogForwarder, UIPlugin, Keycloak, PostgresCluster)
 #   - Stack namespaces
 #   - AppProjects cluster-config / applogging / appkeycloak
-#   - Git repository Secret keycloak-git-repo
+#   - Git repository Secret git-repo (and legacy keycloak-git-repo)
 #
 # Does NOT remove:
 #   - OpenShift GitOps operator / openshift-gitops instance
 #   - S4 (s4 namespace) — optional block at the bottom
 #
 # Prerequisites:
-#   oc logged in, or kubeconfig at /tmp/ocpkubeconfig
+#   oc logged in, or kubeconfig at $HOME/ocpkubeconfig
 #
 # Usage:
 #   ./help-delete.sh
-#   KUBECONFIG=/tmp/ocpkubeconfig ./help-delete.sh
+#   KUBECONFIG=$HOME/ocpkubeconfig ./help-delete.sh
 #   DELETE_S4=true ./help-delete.sh
 
 set -euo pipefail
 
-export KUBECONFIG="${KUBECONFIG:-/tmp/ocpkubeconfig}"
+export KUBECONFIG="${KUBECONFIG:-${HOME}/ocpkubeconfig}"
 NS=openshift-gitops
 DELETE_S4="${DELETE_S4:-false}"
 
 if [[ ! -f "${KUBECONFIG}" ]]; then
   echo "ERROR: kubeconfig not found at ${KUBECONFIG}" >&2
-  echo "  oc config view --raw > /tmp/ocpkubeconfig" >&2
+  echo "  oc config view --raw > \"\${HOME}/ocpkubeconfig\"" >&2
   exit 1
 fi
 
@@ -97,7 +97,7 @@ echo "==> Deleting AppProjects and Git repository Secret..."
 
 oc delete appproject cluster-config applogging appkeycloak \
   -n "${NS}" --ignore-not-found
-oc delete secret keycloak-git-repo -n "${NS}" --ignore-not-found
+oc delete secret git-repo keycloak-git-repo -n "${NS}" --ignore-not-found
 
 # ---------------------------------------------------------------------------
 # Optional: S4

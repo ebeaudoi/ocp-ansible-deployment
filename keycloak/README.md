@@ -5,24 +5,21 @@ Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize an
 ## Layout
 
 ```text
+gitops/                              # shared (not under keycloak/)
+├── git-repository-secret.yaml       # applied by deploy-gitops.yaml Phase 1b
+├── git-ca.crt                       # optional; via gitops/collect-git-ca.sh
+└── collect-git-ca.sh
+
 keycloak/
-├── configure-overlays.sh           # HEADER → rewrite lab overlays + Git TLS
-├── collect-git-ca.sh               # Fetch Git HTTPS CA/self-signed cert → argoCD/git-ca.crt
-├── argoCD/                         # AppProject, Applications, git-repository-secret
-├── deploy-keycloak.sh              # Ordered oc apply -k overlays/lab
+├── configure-overlays.sh            # HEADER → lab overlays + writes gitops/ Secret
+├── help-delete.sh                   # Tear down Keycloak stack only
+├── argoCD/                          # AppProject + Applications (no Git Secret)
+├── deploy-keycloak.sh
 ├── crunchy/
-│   ├── operator/                   # Crunchy Postgres Operator (OLM)
-│   │   ├── base/
-│   │   └── overlays/lab/           # Deploy / day-2 values (Argo CD path)
-│   └── instance/                   # PostgresCluster for Keycloak
-│       ├── base/
-│       └── overlays/lab/
-├── operator/                       # Keycloak namespace + RHBK Operator (OLM)
-│   ├── base/
-│   └── overlays/lab/
-└── instance/                       # Keycloak CR + TLS secret
-    ├── base/
-    └── overlays/lab/
+│   ├── operator/overlays/lab/
+│   └── instance/overlays/lab/
+├── operator/overlays/lab/
+└── instance/overlays/lab/
 ```
 
 All application components run in namespace **`keycloak`**. The Crunchy operator itself runs in **`crunchy-operator`** (cluster-wide / AllNamespaces). Use `overlays/lab` for both initial deploy and later changes (edit patches / re-run `configure-overlays.sh`, then sync or `deploy-keycloak.sh`).
@@ -57,8 +54,8 @@ That rewrites `overlays/lab` (and regenerates TLS when `GENERATE_TLS=true`):
 | `KEYCLOAK_NAMESPACE` | lab `kustomization.yaml` namespaces |
 | `GENERATE_TLS` | `instance/overlays/lab/tls.crt` + `tls.key` |
 | `GIT_REPO_URL` / `GIT_TARGET_REVISION` | `argoCD/*-app-argo.yaml`, `appkeycloak-project.yaml` |
-| `GIT_TLS_INSECURE` / `GIT_USERNAME` / `GIT_PASSWORD` | `argoCD/git-repository-secret.yaml` |
-| `GIT_CA_FILE` + `GIT_APPLY_CA_TO_CLUSTER` | cluster `argocd-tls-certs-cm` (optional) |
+| `GIT_TLS_INSECURE` / `GIT_USERNAME` / `GIT_PASSWORD` | `../gitops/git-repository-secret.yaml` |
+| `GIT_CA_FILE` | `../gitops/git-ca.crt` (applied by `deploy-gitops.yaml`, not this script) |
 
 Or regenerate TLS alone:
 
@@ -82,40 +79,36 @@ Keycloak children live in the default **`openshift-gitops`** Argo CD instance, u
 
 If Argo CD fails with `tls: failed to verify certificate: x509: certificate signed by unknown authority`:
 
-**1. Collect the Git server CA** with [`collect-git-ca.sh`](collect-git-ca.sh) (uses `openssl s_client`; prefers issuer/CA, else the leaf if self-signed):
+**1. Collect the Git server CA** with [`../gitops/collect-git-ca.sh`](../gitops/collect-git-ca.sh) (writes `gitops/git-ca.crt` by default):
 
 ```bash
-# From repo root — default output: keycloak/argoCD/git-ca.crt
-./keycloak/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
-
-# Host or host:port
-./keycloak/collect-git-ca.sh git.example.com
-./keycloak/collect-git-ca.sh git.example.com:8443 -o keycloak/argoCD/git-ca.crt
+# From repo root
+./gitops/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
+./gitops/collect-git-ca.sh git.example.com:8443 -o gitops/git-ca.crt
 ```
 
-**2. Configure Git** in [`configure-overlays.sh`](configure-overlays.sh) **HEADER** (`GIT_*`), then re-run and deploy:
+**2. Configure Git** in [`configure-overlays.sh`](configure-overlays.sh) **HEADER** (`GIT_*`), then re-run:
 
 | Mode | HEADER | What it does |
 |------|--------|--------------|
-| Lab (skip verify) | `GIT_TLS_INSECURE=true` | Writes `argoCD/git-repository-secret.yaml` with `insecure: "true"` |
-| Trust CA | `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=keycloak/argoCD/git-ca.crt`, `GIT_APPLY_CA_TO_CLUSTER=true` | Patches `argocd-tls-certs-cm` for the Git hostname and restarts repo-server |
+| Lab (skip verify) | `GIT_TLS_INSECURE=true` | Writes `gitops/git-repository-secret.yaml` with `insecure: "true"` |
+| Trust CA | `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=gitops/git-ca.crt` | Secret uses verify; `deploy-gitops.yaml` merges CA into `argocd-tls-certs-cm` |
 
 Also set `GIT_REPO_URL` (and optional `GIT_USERNAME` / `GIT_PASSWORD`) so Application `repoURL`, AppProject `sourceRepos`, and the repository Secret match your Git server.
 
 ```bash
-# Edit GIT_* in keycloak/configure-overlays.sh, then:
 ./keycloak/configure-overlays.sh
-
-# Apply repo Secret (playbooks do this first), then Applications
-oc apply -f keycloak/argoCD/git-repository-secret.yaml
+# Phase 1b applies gitops/git-repository-secret.yaml + git-ca.crt after GitOps:
+ansible-playbook deploy-gitops.yaml
+# Or Keycloak-only:
 ansible-playbook deploy-gitops-keycload.yaml
 ```
 
 Ways to register Keycloak Applications:
 
-1. **App-of-Apps (preferred)** — `deploy-gitops.yaml` installs GitOps, applies the Git repo Secret + `cluster-config` + `keycloak-apps` (and `logging-apps`). Argo syncs `keycloak-apps` → `keycloak/argoCD` (AppProject + children).
-2. **Keycloak-only Ansible** — `deploy-gitops-keycload.yaml` still applies `keycloak/argoCD/*.yaml` directly (Git Secret, AppProject, Applications).
-3. **Manual** — apply `keycloak-apps` or `oc apply -k keycloak/argoCD`.
+1. **App-of-Apps (preferred)** — `deploy-gitops.yaml` installs GitOps, applies Git Secret/CA from `gitops/`, then `cluster-config` + `keycloak-apps` / `logging-apps`.
+2. **Keycloak-only Ansible** — `deploy-gitops-keycload.yaml` applies Git Secret/CA, then `keycloak/argoCD` children directly.
+3. **Manual** — `oc apply -f gitops/git-repository-secret.yaml`, then `keycloak-apps` or `oc apply -k keycloak/argoCD`.
 
 Child Applications (sync waves keep operator CRs after operators):
 
@@ -139,7 +132,7 @@ ansible-playbook deploy-gitops-keycload.yaml
 Or apply GitOps parents only:
 
 ```bash
-oc apply -f keycloak/argoCD/git-repository-secret.yaml
+oc apply -f gitops/git-repository-secret.yaml
 oc apply -f gitops/app-of-apps/cluster-config-project.yaml
 oc apply -f gitops/app-of-apps/keycloak-apps.yaml
 # Argo syncs keycloak-apps → keycloak/argoCD

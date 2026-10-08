@@ -18,6 +18,7 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
 - [What `deploy-gitops.yaml` does](#what-deploy-gitopsyaml-does)
   - [Phase 0 — Sanity check](#phase-0--sanity-check)
   - [Phase 1 — Install OpenShift GitOps](#phase-1--install-openshift-gitops)
+  - [Phase 1b — Git repository access](#phase-1b--git-repository-access-immediately-after-gitops)
   - [Phase 2 — Two independent App-of-Apps](#phase-2--two-independent-app-of-apps)
   - [Important playbook variables](#important-playbook-variables)
 - [Prerequisites](#prerequisites)
@@ -33,7 +34,7 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
   - [Encode Loki S3 Secret values](#encode-loki-s3-secret-values)
   - [Update Loki TLS CA bundle (HTTPS endpoints)](#update-loki-tls-ca-bundle-https-endpoints)
 - [Loki node placement (taints)](#loki-node-placement-taints)
-- [Keycloak Git with self-signed TLS](#keycloak-git-with-self-signed-tls)
+- [Git with self-signed TLS](#git-with-self-signed-tls)
 - [Run the deployment](#run-the-deployment)
 - [Troubleshooting](#troubleshooting)
 
@@ -45,7 +46,7 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
 deploy-gitops.yaml
   ├── OpenShift GitOps operator
   ├── default Argo CD (openshift-gitops)
-  ├── Git repository Secret (self-signed / private Git)
+  ├── Git repository Secret + optional CA (gitops/)  ← right after GitOps is ready
   └── App-of-Apps (two independent roots)
         ├── AppProject cluster-config
         ├── Application logging-apps  → logging/argoCD (applogging + children)
@@ -75,7 +76,7 @@ There is no umbrella `cluster-apps` Application. The two roots sync, fail, and p
 
 ## What `deploy-gitops.yaml` does
 
-Main GitOps playbook. Runs on `localhost` with kubeconfig `/tmp/ocpkubeconfig`.
+Main GitOps playbook. Runs on `localhost` with kubeconfig `$HOME/ocpkubeconfig`.
 
 ### Phase 0 — Sanity check
 
@@ -89,17 +90,25 @@ Fetches pods in `openshift-marketplace` to confirm the cluster API is reachable.
 4. Waits for and approves the InstallPlan
 5. Waits for the Argo CD CRD and the default `openshift-gitops` ArgoCD instance
 
+### Phase 1b — Git repository access (immediately after GitOps)
+
+Applies shared Git access from [`gitops/`](gitops/) before any Application clones the repo:
+
+| Ansible task | File / condition | Role |
+|--------------|------------------|------|
+| Deploy Git repository Secret | `gitops/git-repository-secret.yaml` | Repo URL, credentials, `insecure` flag |
+| Apply Git CA (optional) | `gitops/git-ca.crt` if present | Merges into `argocd-tls-certs-cm`, restarts repo-server |
+
+Collect the CA with `./gitops/collect-git-ca.sh <git-host-or-url>` (writes `gitops/git-ca.crt` by default).
+
 ### Phase 2 — Two independent App-of-Apps
 
-Ansible applies only bootstrap objects. Argo CD then pulls child Applications and workloads from Git.
+Ansible applies App-of-Apps roots. Argo CD then pulls child Applications and workloads from Git.
 
-**Apply order:** Git repository Secret → AppProject `cluster-config` → `logging-apps` → `keycloak-apps`.
-
-The Git Secret is shared by both roots when they use the same HTTPS repo URL. Apply it before either root clones the repo.
+**Apply order:** AppProject `cluster-config` → `logging-apps` → `keycloak-apps`.
 
 | Ansible task | File | Role |
 |--------------|------|------|
-| Deploy Git repository Secret | `keycloak/argoCD/git-repository-secret.yaml` | Repo credentials / `insecure` for Git TLS |
 | Deploy cluster-config AppProject | `gitops/app-of-apps/cluster-config-project.yaml` | Shared AppProject for both roots |
 | Deploy logging-apps | `gitops/app-of-apps/logging-apps.yaml` | App-of-Apps #1 — logging stack |
 | Deploy keycloak-apps | `gitops/app-of-apps/keycloak-apps.yaml` | App-of-Apps #2 — Keycloak stack |
@@ -121,7 +130,7 @@ Edit `vars:` in the playbook, or override with `-e`.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `kubeconfig_path` | `/tmp/ocpkubeconfig` | Cluster kubeconfig |
+| `kubeconfig_path` | `$HOME/ocpkubeconfig` | Cluster kubeconfig |
 | `verify_ssl` | `false` | TLS verify for kubernetes.core modules |
 | `repo_root` | `playbook_dir` | Repo root for manifest paths |
 | `gitops_channel` | `gitops-1.21` | GitOps operator channel (`gitopschannel` alias kept) |
@@ -130,10 +139,12 @@ Edit `vars:` in the playbook, or override with `-e`.
 | `gitops_install_plan_approval` | `Manual` | InstallPlan approval mode |
 | `gitops_operator_namespace` | `openshift-gitops-operator` | GitOps operator namespace |
 | `argocd_namespace` / `argocd_name` | `openshift-gitops` | Default Argo CD instance |
+| `git_repo_secret_manifest` | `gitops/git-repository-secret.yaml` | Shared Git repo Secret (Phase 1b) |
+| `git_ca_file` | `gitops/git-ca.crt` | Optional Git CA PEM (Phase 1b) |
+| `git_apply_ca` | `true` | Apply CA into `argocd-tls-certs-cm` when file exists |
 | `cluster_config_project_manifest` | `gitops/app-of-apps/cluster-config-project.yaml` | Shared AppProject |
 | `logging_apps_manifest` | `gitops/app-of-apps/logging-apps.yaml` | Logging App-of-Apps root |
 | `keycloak_apps_manifest` | `gitops/app-of-apps/keycloak-apps.yaml` | Keycloak App-of-Apps root |
-| `keycloak_git_repo_secret_manifest` | `keycloak/argoCD/git-repository-secret.yaml` | Git repo Secret for Argo sync |
 
 #### `deploy-gitops-keycload.yaml`
 
@@ -141,7 +152,8 @@ Shares the GitOps / kubeconfig variables above. Instead of App-of-Apps roots, it
 
 | Variable | Default |
 |----------|---------|
-| `keycloak_git_repo_secret_manifest` | `keycloak/argoCD/git-repository-secret.yaml` |
+| `git_repo_secret_manifest` | `gitops/git-repository-secret.yaml` |
+| `git_ca_file` | `gitops/git-ca.crt` |
 | `keycloak_appproject_manifest` | `keycloak/argoCD/appkeycloak-project.yaml` |
 | `crunchy_operator_app_manifest` | `keycloak/argoCD/crunchy-operator-app-argo.yaml` |
 | `rhbk_operator_app_manifest` | `keycloak/argoCD/rhbk-operator-app-argo.yaml` |
@@ -239,12 +251,12 @@ python3 -m pip download kubernetes -d offline-bundle/pip \
 
 ```bash
 oc login --server=<api-url> --token=<token>
-oc config view --raw > /tmp/ocpkubeconfig
+oc config view --raw > "$HOME/ocpkubeconfig"
 ```
 
 `deploy-s4.yaml` uses `oc kustomize` / `oc rollout` (this environment may not have `kubectl` or a standalone `kustomize` binary).
 
-Do not commit tokens or kubeconfig files. Playbooks and overlay scripts expect the kubeconfig at `/tmp/ocpkubeconfig`.
+Do not commit tokens or kubeconfig files. Playbooks and overlay scripts expect the kubeconfig at `$HOME/ocpkubeconfig`.
 
 ### 5. Align operator Subscriptions with your cluster
 
@@ -397,30 +409,30 @@ Pods stay `Pending` until nodes match the overlay’s selector and tolerations.
 
 ---
 
-## Keycloak Git with self-signed TLS
+## Git with self-signed TLS
 
-If Argo CD cannot fetch the repo (`x509: certificate signed by unknown authority`), configure Git in [`keycloak/configure-overlays.sh`](keycloak/configure-overlays.sh).
+If Argo CD cannot fetch the repo (`x509: certificate signed by unknown authority`), configure Git under [`gitops/`](gitops/) and in [`keycloak/configure-overlays.sh`](keycloak/configure-overlays.sh) `GIT_*` HEADER values.
 
 **Collect the Git CA** (issuer preferred; leaf if the cert is self-signed):
 
 ```bash
-# From repo root — writes keycloak/argoCD/git-ca.crt by default
-./keycloak/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
+# From repo root — writes gitops/git-ca.crt by default
+./gitops/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
 
 # Or host / host:port, custom output path
-./keycloak/collect-git-ca.sh git.example.com:8443 -o keycloak/argoCD/git-ca.crt
+./gitops/collect-git-ca.sh git.example.com:8443 -o gitops/git-ca.crt
 ```
 
-Then choose a mode and re-run the overlay script:
+Then choose a mode and re-run the overlay script (rewrites `gitops/git-repository-secret.yaml`):
 
 1. **Lab (skip verify):** set `GIT_TLS_INSECURE=true` in `keycloak/configure-overlays.sh`.
-2. **Trust CA:** set `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=keycloak/argoCD/git-ca.crt`, `GIT_APPLY_CA_TO_CLUSTER=true`, and `GIT_REPO_URL`.
+2. **Trust CA:** set `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=gitops/git-ca.crt`, and `GIT_REPO_URL`.
 
 ```bash
 ./keycloak/configure-overlays.sh
-# Full stack (App-of-Apps) — applies Git Secret then both roots:
+# deploy-gitops.yaml applies the Secret + CA (Phase 1b) right after GitOps, then App-of-Apps:
 ansible-playbook deploy-gitops.yaml
-# Or Keycloak-only path (applies Secret + Keycloak children directly):
+# Or Keycloak-only path:
 ansible-playbook deploy-gitops-keycload.yaml
 ```
 
@@ -474,5 +486,5 @@ oc get pods -n keycloak
 | `CatalogSourcesUnhealthy` | Bad catalog name or unhealthy CS | `oc get catalogsource -n openshift-marketplace` and fix Subscription `source` |
 | `UIPlugin` CRD / resource not found | COO not ready or Argo RBAC | Wait for COO CSV/CRD; ensure UIPlugin create RBAC exists |
 | Loki pods Pending on scheduling | Nodes missing infra label/taint that matches the **rhlab** overlay | Label + taint with `node-role.kubernetes.io/infra` (see [Loki node placement](#loki-node-placement-taints)) |
-| Argo CD `x509: certificate signed by unknown authority` | Self-signed Git TLS | Set `GIT_*` in `keycloak/configure-overlays.sh`, re-run, then `deploy-gitops.yaml` (or apply `git-repository-secret.yaml`) |
-| Stale kubeconfig / `401 Unauthorized` from API | Expired token in `/tmp/ocpkubeconfig` | Re-login with `oc` and rewrite `/tmp/ocpkubeconfig` |
+| Argo CD `x509: certificate signed by unknown authority` | Self-signed Git TLS | Collect CA with `./gitops/collect-git-ca.sh`, set `GIT_*`, re-run overlays, then `deploy-gitops.yaml` |
+| Stale kubeconfig / `401 Unauthorized` from API | Expired token in `$HOME/ocpkubeconfig` | Re-login with `oc` and rewrite `$HOME/ocpkubeconfig` |

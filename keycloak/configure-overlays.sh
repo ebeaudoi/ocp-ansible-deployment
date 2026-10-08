@@ -11,17 +11,21 @@
 #   - crunchy/instance/overlays/lab/  (PostgresCluster)
 #   - instance/overlays/lab/          (Keycloak CR + TLS)
 #
-# Also rewrites Argo CD Git settings under argoCD/ for self-signed / private Git:
-#   - argoCD/git-repository-secret.yaml
+# Also rewrites Argo CD Git settings for self-signed / private Git:
+#   - ../gitops/git-repository-secret.yaml  (applied by deploy-gitops.yaml)
 #   - argoCD/*-app-argo.yaml (repoURL / targetRevision)
 #   - argoCD/appkeycloak-project.yaml (sourceRepos)
+# Git CA file lives under gitops/git-ca.crt (collect with gitops/collect-git-ca.sh);
+# deploy-gitops.yaml inserts it into Argo CD after GitOps is ready.
 # =============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYCLOAK_ROOT="${SCRIPT_DIR}"
+REPO_ROOT="$(cd "${KEYCLOAK_ROOT}/.." && pwd)"
 ARGOCD_DIR="${KEYCLOAK_ROOT}/argoCD"
+GITOPS_DIR="${REPO_ROOT}/gitops"
 
 # =============================================================================
 # HEADER — edit these values for your lab / cluster
@@ -68,15 +72,16 @@ GIT_TARGET_REVISION="HEAD"
 GIT_USERNAME=""
 GIT_PASSWORD=""
 # true  => Argo CD skips Git TLS verify (typical for self-signed labs).
-# false => trust GIT_CA_FILE via argocd-tls-certs-cm (preferred when you have the CA).
+# false => trust GIT_CA_FILE (deploy-gitops.yaml merges it into argocd-tls-certs-cm).
 GIT_TLS_INSECURE="true"
-# Path to PEM CA that signed the Git server cert (used when GIT_TLS_INSECURE=false).
-GIT_CA_FILE=""
+# Path to PEM CA (collect with ./gitops/collect-git-ca.sh). Default under gitops/.
+GIT_CA_FILE="${GITOPS_DIR}/git-ca.crt"
 # Hostname key in argocd-tls-certs-cm (empty => parsed from GIT_REPO_URL).
 GIT_TLS_HOST=""
-# When true and GIT_CA_FILE is set, patch openshift-gitops ConfigMap argocd-tls-certs-cm.
+# Optional: also patch argocd-tls-certs-cm from this script (normally false —
+# deploy-gitops.yaml Phase 1b applies the CA after GitOps is ready).
 GIT_APPLY_CA_TO_CLUSTER="false"
-KUBECONFIG_PATH="/tmp/ocpkubeconfig"
+KUBECONFIG_PATH="${HOME}/ocpkubeconfig"
 
 # =============================================================================
 # Paths (set per overlay)
@@ -91,7 +96,7 @@ CRUNCHY_OPERATOR_KUSTOMIZATION=""
 CRUNCHY_INSTANCE_KUSTOMIZATION=""
 KEYCLOAK_INSTANCE_KUSTOMIZATION=""
 GENERATE_TLS_SCRIPT=""
-GIT_REPO_SECRET="${ARGOCD_DIR}/git-repository-secret.yaml"
+GIT_REPO_SECRET="${GITOPS_DIR}/git-repository-secret.yaml"
 APPKEYCLOAK_PROJECT="${ARGOCD_DIR}/appkeycloak-project.yaml"
 
 # =============================================================================
@@ -410,20 +415,22 @@ configure_keycloak_overlay() {
 # =============================================================================
 
 write_git_repository_secret() {
+  mkdir -p "$(dirname "${GIT_REPO_SECRET}")"
   cat > "${GIT_REPO_SECRET}" <<EOF
-# Argo CD repository credentials for the Keycloak Applications' repoURL.
+# Argo CD repository credentials for App-of-Apps (logging-apps + keycloak-apps).
 # Generated/updated by keycloak/configure-overlays.sh (GIT_* HEADER values).
+# Applied by deploy-gitops.yaml immediately after OpenShift GitOps is ready.
 # Required when the Git server uses a self-signed certificate or needs auth.
 apiVersion: v1
 kind: Secret
 metadata:
-  name: keycloak-git-repo
+  name: git-repo
   namespace: openshift-gitops
   labels:
     argocd.argoproj.io/secret-type: repository
 stringData:
   type: git
-  name: keycloak-git-repo
+  name: git-repo
   url: ${GIT_REPO_URL}
   insecure: "${GIT_TLS_INSECURE}"
   username: "${GIT_USERNAME}"
@@ -539,6 +546,7 @@ configure_argocd_git() {
   write_git_repository_secret
   write_argocd_repo_urls
   write_appkeycloak_project
+  # CA is normally applied by deploy-gitops.yaml Phase 1b (not this script).
   apply_git_ca_to_cluster
 }
 
@@ -570,8 +578,7 @@ main() {
   configure_argocd_git
 
   echo
-  echo "Done. Review git diff, then apply GitOps objects and/or overlays:"
-  echo "  oc apply -f keycloak/argoCD/git-repository-secret.yaml"
+  echo "Done. Review git diff, then deploy (Git Secret/CA applied after GitOps):"
   echo "  ansible-playbook deploy-gitops.yaml"
   echo "  ./keycloak/deploy-keycloak.sh    # direct oc apply -k overlays/lab"
 }

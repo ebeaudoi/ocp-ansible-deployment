@@ -92,7 +92,7 @@ LOKI_TOLERATION_EFFECT="NoSchedule"
 # No manual PEM value needed in the header.
 
 # --- Optional kubeconfig / Route lookup ---
-KUBECONFIG_PATH="/tmp/ocpkubeconfig"
+KUBECONFIG_PATH="${HOME}/ocpkubeconfig"
 S4_NAMESPACE="s4"
 S4_API_ROUTE_NAME="s4-api"   # OpenShift Route object name (not the hostname)
 

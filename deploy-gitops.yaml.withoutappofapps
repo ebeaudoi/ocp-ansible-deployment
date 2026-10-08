@@ -4,7 +4,7 @@
   gather_facts: false
   vars:
     # --- Cluster access ---
-    kubeconfig_path: "/tmp/ocpkubeconfig"
+    kubeconfig_path: "{{ lookup('env', 'HOME') }}/ocpkubeconfig"
     verify_ssl: false
     # ocp_token: "sha256~..."   # oc whoami --show-token
     # ansible_python_interpreter: "/usr/bin/python3"
@@ -49,7 +49,8 @@
     logging_instance_app_manifest: "{{ logging_argocd_dir }}/logginginstance-app-argo.yaml"
 
     # --- Keycloak Argo CD manifests ---
-    keycloak_git_repo_secret_manifest: "{{ keycloak_argocd_dir }}/git-repository-secret.yaml"
+    git_repo_secret_manifest: "{{ repo_root }}/gitops/git-repository-secret.yaml"
+    keycloak_git_repo_secret_manifest: "{{ git_repo_secret_manifest }}"
     keycloak_appproject_manifest: "{{ keycloak_argocd_dir }}/appkeycloak-project.yaml"
     crunchy_operator_app_manifest: "{{ keycloak_argocd_dir }}/crunchy-operator-app-argo.yaml"
     rhbk_operator_app_manifest: "{{ keycloak_argocd_dir }}/rhbk-operator-app-argo.yaml"

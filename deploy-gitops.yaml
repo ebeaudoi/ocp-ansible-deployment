@@ -4,7 +4,7 @@
   gather_facts: false
   vars:
     # --- Cluster access ---
-    kubeconfig_path: "/tmp/ocpkubeconfig"
+    kubeconfig_path: "{{ lookup('env', 'HOME') }}/ocpkubeconfig"
     verify_ssl: false
     # ocp_token: "sha256~..."   # oc whoami --show-token
     # ansible_python_interpreter: "/usr/bin/python3"
@@ -12,7 +12,7 @@
     # --- Paths ---
     repo_root: "{{ playbook_dir }}"
     app_of_apps_dir: "{{ repo_root }}/gitops/app-of-apps"
-    keycloak_argocd_dir: "{{ repo_root }}/keycloak/argoCD"
+    gitops_dir: "{{ repo_root }}/gitops"
 
     # --- OpenShift GitOps operator (OLM) ---
     gitops_operator_namespace: "openshift-gitops-operator"
@@ -40,6 +40,15 @@
     argocd_instance_retries: 40
     argocd_instance_delay: 10
 
+    # --- Git repository access (shared by App-of-Apps roots) ---
+    # Applied immediately after GitOps/Argo CD is ready (Phase 1b).
+    git_repo_secret_manifest: "{{ gitops_dir }}/git-repository-secret.yaml"
+    git_ca_file: "{{ gitops_dir }}/git-ca.crt"
+    # When true and git_ca_file exists, merge into argocd-tls-certs-cm and restart repo-server.
+    git_apply_ca: true
+    # Hostname key in argocd-tls-certs-cm (empty => derived from Secret url:).
+    git_tls_host: ""
+
     # --- App-of-Apps manifests (gitops/app-of-apps) ---
     # Two independent App-of-Apps roots (no single umbrella Application):
     #   logging_apps_manifest  → Application logging-apps
@@ -48,10 +57,6 @@
     cluster_config_project_manifest: "{{ app_of_apps_dir }}/cluster-config-project.yaml"
     logging_apps_manifest: "{{ app_of_apps_dir }}/logging-apps.yaml"
     keycloak_apps_manifest: "{{ app_of_apps_dir }}/keycloak-apps.yaml"
-
-    # --- Git repository Secret (self-signed / private Git) ---
-    # Shared by both App-of-Apps roots when they pull from the same Git HTTPS URL.
-    keycloak_git_repo_secret_manifest: "{{ keycloak_argocd_dir }}/git-repository-secret.yaml"
 
     # Compatibility alias (older docs / -e gitopschannel=...)
     gitopschannel: "{{ gitops_channel }}"
@@ -167,6 +172,70 @@
       delay: "{{ argocd_instance_delay }}"
 
     # =========================================================================
+    # Phase 1b — Git repository access (right after GitOps is ready)
+    #
+    # Apply shared repo Secret and optional CA before any Application clones Git.
+    # Manifests live under gitops/ (not under keycloak/).
+    # Collect CA: ./gitops/collect-git-ca.sh <git-host-or-url>
+    # =========================================================================
+
+    - name: Deploy Git repository Secret (self-signed / private Git)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        verify_ssl: "{{ verify_ssl }}"
+        src: "{{ git_repo_secret_manifest }}"
+        state: present
+
+    - name: Check for Git CA certificate file
+      ansible.builtin.stat:
+        path: "{{ git_ca_file }}"
+      register: git_ca_stat
+
+    - name: Derive git_tls_host from repository Secret URL
+      when:
+        - git_apply_ca | bool
+        - git_ca_stat.stat.exists
+        - (git_tls_host | default('') | length) == 0
+      ansible.builtin.set_fact:
+        git_tls_host: >-
+          {{
+            lookup('file', git_repo_secret_manifest)
+            | regex_search('url:\\s*https?://([^/\\s]+)', '\\1')
+          }}
+
+    - name: Apply Git CA to Argo CD argocd-tls-certs-cm
+      when:
+        - git_apply_ca | bool
+        - git_ca_stat.stat.exists
+        - (git_tls_host | default('') | length) > 0
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc --kubeconfig "{{ kubeconfig_path }}" -n "{{ argocd_namespace }}" \
+          create configmap argocd-tls-certs-cm \
+          --from-file="{{ git_tls_host }}={{ git_ca_file }}" \
+          --dry-run=client -o yaml \
+        | oc --kubeconfig "{{ kubeconfig_path }}" apply -f -
+        oc --kubeconfig "{{ kubeconfig_path }}" -n "{{ argocd_namespace }}" \
+          label configmap argocd-tls-certs-cm \
+          app.kubernetes.io/name=argocd-tls-certs-cm \
+          app.kubernetes.io/part-of=argocd \
+          --overwrite
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Restart Argo CD repo-server to pick up Git TLS CAs
+      when:
+        - git_apply_ca | bool
+        - git_ca_stat.stat.exists
+        - (git_tls_host | default('') | length) > 0
+      ansible.builtin.command: >
+        oc --kubeconfig {{ kubeconfig_path }}
+        -n {{ argocd_namespace }}
+        rollout restart deployment/openshift-gitops-repo-server
+      changed_when: true
+
+    # =========================================================================
     # Phase 2 — Two independent App-of-Apps deployments
     #
     # Instead of one umbrella Application (cluster-apps), this playbook registers
@@ -183,21 +252,10 @@
     #        creates: AppProject appkeycloak + Crunchy/RHBK/Postgres/Keycloak Apps
     #        those children then sync workload manifests
     #
-    # Ansible only applies: Git Secret → cluster-config → the two roots.
-    # It does NOT apply child Application YAMLs or workload kustomizations;
-    # Argo CD pulls those from Git after the roots sync.
-    #
-    # Order matters for private/self-signed Git: deploy the repository Secret
-    # before either root Application tries to clone the repo.
+    # Ansible only applies: cluster-config → the two roots.
+    # Git Secret/CA were applied in Phase 1b. Child Application YAMLs and workload
+    # kustomizations are pulled from Git by Argo CD after the roots sync.
     # =========================================================================
-
-    # Repo credentials / insecure TLS flag used by logging-apps and keycloak-apps.
-    - name: Deploy Git repository Secret (self-signed / private Git)
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        verify_ssl: "{{ verify_ssl }}"
-        src: "{{ keycloak_git_repo_secret_manifest }}"
-        state: present
 
     # Shared Argo CD AppProject that owns both App-of-Apps root Applications.
     - name: Deploy cluster-config AppProject
