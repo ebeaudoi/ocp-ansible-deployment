@@ -112,9 +112,9 @@ done
 
 echo
 echo "Done. Redeploy Keycloak with:"
+echo "  ansible-playbook deploy-gitops-keycloak.yaml"
+echo "  # or full stack (logging + Keycloak):"
 echo "  ansible-playbook deploy-gitops.yaml"
-echo "  # or Keycloak-only:"
-echo "  ansible-playbook deploy-gitops-keycload.yaml"
 echo
 echo "Optional: also remove shared Git Secret with:"
 echo "  DELETE_GIT_SECRET=true ./keycloak/help-delete.sh"

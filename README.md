@@ -120,13 +120,15 @@ Ansible applies App-of-Apps roots. Argo CD then pulls child Applications and wor
 
 Ansible does **not** apply child Application YAMLs or workload kustomizations.
 
-**Keycloak-only alternative:** `deploy-gitops-keycload.yaml` (filename is intentional) still installs GitOps if needed, then applies `keycloak/argoCD` children directly — it does **not** use `logging-apps` / `keycloak-apps`.
+**Keycloak-only (App-of-Apps):** `deploy-gitops-keycloak.yaml` — same as above through Phase 1b, then only `cluster-config` + `keycloak-apps` (no `logging-apps`).
+
+**Legacy Keycloak-only:** `deploy-gitops-keycload.yaml` installs GitOps, then applies `keycloak/argoCD` child Applications directly (no App-of-Apps root).
 
 ### Important playbook variables
 
 Edit `vars:` in the playbook, or override with `-e`.
 
-#### `deploy-gitops.yaml`
+#### `deploy-gitops.yaml` / `deploy-gitops-keycloak.yaml`
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -146,14 +148,14 @@ Edit `vars:` in the playbook, or override with `-e`.
 | `logging_apps_manifest` | `gitops/app-of-apps/logging-apps.yaml` | Logging App-of-Apps root |
 | `keycloak_apps_manifest` | `gitops/app-of-apps/keycloak-apps.yaml` | Keycloak App-of-Apps root |
 
-#### `deploy-gitops-keycload.yaml`
+`deploy-gitops-keycloak.yaml` shares the same variables as `deploy-gitops.yaml` except it omits `logging_apps_manifest` (only deploys `keycloak_apps_manifest`).
 
-Shares the GitOps / kubeconfig variables above. Instead of App-of-Apps roots, it applies:
+#### `deploy-gitops-keycload.yaml` (legacy)
+
+Shares the GitOps / kubeconfig / Git Secret variables above. Instead of App-of-Apps roots, it applies child Applications directly:
 
 | Variable | Default |
 |----------|---------|
-| `git_repo_secret_manifest` | `gitops/git-repository-secret.yaml` |
-| `git_ca_file` | `gitops/git-ca.crt` |
 | `keycloak_appproject_manifest` | `keycloak/argoCD/appkeycloak-project.yaml` |
 | `crunchy_operator_app_manifest` | `keycloak/argoCD/crunchy-operator-app-argo.yaml` |
 | `rhbk_operator_app_manifest` | `keycloak/argoCD/rhbk-operator-app-argo.yaml` |
@@ -161,8 +163,9 @@ Shares the GitOps / kubeconfig variables above. Instead of App-of-Apps roots, it
 | `keycloak_instance_app_manifest` | `keycloak/argoCD/keycloak-instance-app-argo.yaml` |
 
 ```bash
-ansible-playbook deploy-gitops.yaml
-ansible-playbook deploy-gitops-keycload.yaml          # Keycloak children only
+ansible-playbook deploy-gitops.yaml                   # GitOps + logging + Keycloak
+ansible-playbook deploy-gitops-keycloak.yaml          # GitOps + Keycloak App-of-Apps only
+ansible-playbook deploy-gitops-keycload.yaml          # legacy: GitOps + Keycloak children directly
 ansible-playbook deploy-gitops.yaml -e gitops_channel=gitops-1.22
 ```
 
@@ -432,8 +435,8 @@ Then choose a mode and re-run the overlay script (rewrites `gitops/git-repositor
 ./keycloak/configure-overlays.sh
 # deploy-gitops.yaml applies the Secret + CA (Phase 1b) right after GitOps, then App-of-Apps:
 ansible-playbook deploy-gitops.yaml
-# Or Keycloak-only path:
-ansible-playbook deploy-gitops-keycload.yaml
+# Or Keycloak only (App-of-Apps):
+ansible-playbook deploy-gitops-keycloak.yaml
 ```
 
 Details: [`keycloak/README.md`](keycloak/README.md#self-signed-git-tls).

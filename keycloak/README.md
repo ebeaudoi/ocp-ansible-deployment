@@ -100,15 +100,16 @@ Also set `GIT_REPO_URL` (and optional `GIT_USERNAME` / `GIT_PASSWORD`) so Applic
 ./keycloak/configure-overlays.sh
 # Phase 1b applies gitops/git-repository-secret.yaml + git-ca.crt after GitOps:
 ansible-playbook deploy-gitops.yaml
-# Or Keycloak-only:
-ansible-playbook deploy-gitops-keycload.yaml
+# Or GitOps + Keycloak only (App-of-Apps, no logging):
+ansible-playbook deploy-gitops-keycloak.yaml
 ```
 
 Ways to register Keycloak Applications:
 
-1. **App-of-Apps (preferred)** — `deploy-gitops.yaml` installs GitOps, applies Git Secret/CA from `gitops/`, then `cluster-config` + `keycloak-apps` / `logging-apps`.
-2. **Keycloak-only Ansible** — `deploy-gitops-keycload.yaml` applies Git Secret/CA, then `keycloak/argoCD` children directly.
-3. **Manual** — `oc apply -f gitops/git-repository-secret.yaml`, then `keycloak-apps` or `oc apply -k keycloak/argoCD`.
+1. **App-of-Apps full stack** — `deploy-gitops.yaml` (GitOps + `logging-apps` + `keycloak-apps`).
+2. **App-of-Apps Keycloak only** — `deploy-gitops-keycloak.yaml` (GitOps + `keycloak-apps`, no logging).
+3. **Legacy Ansible** — `deploy-gitops-keycload.yaml` applies Git Secret/CA, then `keycloak/argoCD` children directly.
+4. **Manual** — `oc apply -f gitops/git-repository-secret.yaml`, then `keycloak-apps` or `oc apply -k keycloak/argoCD`.
 
 Child Applications (sync waves keep operator CRs after operators):
 
@@ -125,7 +126,10 @@ Instance apps use `SkipDryRunOnMissingResource` so they can retry until operator
 # Full stack via App-of-Apps
 ansible-playbook deploy-gitops.yaml
 
-# Keycloak-only (Ansible applies child Applications)
+# GitOps + Keycloak only (App-of-Apps)
+ansible-playbook deploy-gitops-keycloak.yaml
+
+# Legacy: Ansible applies Keycloak child Applications directly
 ansible-playbook deploy-gitops-keycload.yaml
 ```
 
