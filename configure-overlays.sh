@@ -6,7 +6,7 @@
 #   ./configure-overlays.sh
 #
 # Rewrites lab/environment kustomize patches for logging (Loki/S4).
-# Keycloak overlays are managed separately by keycloak/configure-overlays.sh
+# Keycloak overlays are managed separately by configure-keycloak-overlays.sh
 # (invoked from here when KEYCLOAK_ENABLED=true).
 #
 # Logging / S4 patch inventory:
@@ -35,7 +35,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
-KEYCLOAK_CONFIGURE_SCRIPT="${REPO_ROOT}/keycloak/configure-overlays.sh"
+KEYCLOAK_CONFIGURE_SCRIPT="${REPO_ROOT}/configure-keycloak-overlays.sh"
 LOGGING_ARGOCD_DIR="${REPO_ROOT}/logging/argoCD"
 APP_OF_APPS_DIR="${REPO_ROOT}/gitops/app-of-apps"
 GITOPS_DIR="${REPO_ROOT}/gitops"
@@ -51,7 +51,7 @@ S4_ENABLED=true
 # (Route reachable). When true, the script fetches the TLS CA from the S4
 # API route and updates loki-s3-ca-bundle-patch.yaml.
 S4_DEPLOYED_ON_CLUSTER=true
-# Set KEYCLOAK_ENABLED=true to also run keycloak/configure-overlays.sh
+# Set KEYCLOAK_ENABLED=true to also run configure-keycloak-overlays.sh
 # (edit Keycloak HEADER values in that script, not here).
 KEYCLOAK_ENABLED=true
 
@@ -106,7 +106,7 @@ S4_NAMESPACE="s4"
 S4_API_ROUTE_NAME="s4-api"   # OpenShift Route object name (not the hostname)
 
 # --- Argo CD Git repository (all App-of-Apps + gitops/git-repository-secret.yaml) ---
-# Exported to keycloak/configure-overlays.sh when KEYCLOAK_ENABLED=true.
+# Exported to configure-keycloak-overlays.sh when KEYCLOAK_ENABLED=true.
 # GIT_PROTOCOL=https|ssh. For SSH, the script ASKS for GIT_SSH_PORT and builds
 #   ssh://git@HOST:PORT/ORG/REPO.git  (required by Argo CD for non-22 ports).
 GIT_PROTOCOL="${GIT_PROTOCOL:-https}"
@@ -552,7 +552,7 @@ main() {
     "${KEYCLOAK_CONFIGURE_SCRIPT}"
   else
     echo
-    echo "KEYCLOAK_ENABLED=false — skipping keycloak/configure-overlays.sh"
+    echo "KEYCLOAK_ENABLED=false — skipping configure-keycloak-overlays.sh"
   fi
 
   echo
@@ -561,7 +561,7 @@ main() {
     echo "  Deploy/refresh S4 with: ansible-playbook deploy-s4.yaml"
   fi
   if [[ "${KEYCLOAK_ENABLED}" == "true" ]]; then
-    echo "  Keycloak overlays: edit/run keycloak/configure-overlays.sh (see keycloak/README.md)"
+    echo "  Keycloak overlays: edit/run ./configure-keycloak-overlays.sh (see keycloak/README.md)"
   fi
 }
 

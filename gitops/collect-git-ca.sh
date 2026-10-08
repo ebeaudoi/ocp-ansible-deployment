@@ -162,11 +162,12 @@ main() {
   echo "  Git host: ${GIT_HOST}:${GIT_PORT}"
   echo
   echo "Next steps (trust CA in Argo CD):"
-  echo "  1) In keycloak/configure-overlays.sh HEADER set:"
+  echo "  1) In configure-overlays.sh or configure-keycloak-overlays.sh HEADER set:"
+  echo "       GIT_PROTOCOL=https"
   echo "       GIT_REPO_URL=https://${GIT_HOST}/<org>/<repo>.git"
   echo "       GIT_TLS_INSECURE=false"
   echo "       GIT_CA_FILE=${out}"
-  echo "  2) Run: ./keycloak/configure-overlays.sh"
+  echo "  2) Run: ./configure-keycloak-overlays.sh   # or ./configure-overlays.sh"
   echo "  3) Deploy: ansible-playbook deploy-gitops.yaml"
   echo "     (applies gitops/git-repository-secret.yaml and git-ca.crt after GitOps is ready)"
 }

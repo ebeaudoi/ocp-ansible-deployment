@@ -9,7 +9,7 @@
 #
 # Prerequisites:
 #   oc config view --raw > "$HOME/ocpkubeconfig"
-#   ./keycloak/configure-overlays.sh   # optional GIT_* / overlays
+#   ./configure-keycloak-overlays.sh   # optional GIT_* / Keycloak overlays
 - name: Deploy GitOps and Keycloak only
   hosts: localhost
   gather_facts: false
