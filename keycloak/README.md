@@ -1,32 +1,54 @@
 # Keycloak on OpenShift
 
-Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize and `oc apply -k`.
+Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize and GitOps (Argo CD).
+
+## Index
+
+- [Layout](#layout)
+- [Prerequisites](#prerequisites)
+- [Lab customization](#lab-customization-before-deploy)
+- [GitOps (preferred)](#gitops-preferred)
+  - [Git (HTTPS or SSH)](#git-https-or-ssh)
+  - [Self-signed Git TLS](#self-signed-git-tls)
+- [Manual deploy](#manual-deploy)
+- [What gets created](#what-gets-created)
+- [Verify](#verify)
+- [Tear down](#tear-down)
+- [Troubleshooting](#troubleshooting)
+
+---
 
 ## Layout
 
 ```text
-gitops/                              # shared (not under keycloak/)
-├── git-repository-secret.yaml       # applied by deploy-gitops.yaml Phase 1b
-├── git-ca.crt                       # optional; via gitops/collect-git-ca.sh
-├── collect-git-ca.sh
-└── git-configure-lib.sh             # shared by configure-*.sh scripts
+# Repo root (shared / entrypoints)
+configure-keycloak-overlays.sh       # HEADER → Keycloak lab overlays + Git settings
+configure-overlays.sh                # logging/S4; calls configure-keycloak-overlays.sh when KEYCLOAK_ENABLED=true
+deploy-gitops.yaml                   # GitOps + logging-apps + keycloak-apps
+deploy-gitops-keycloak.yaml          # GitOps + keycloak-apps only
 
-# Repo root:
-#   configure-keycloak-overlays.sh   # HEADER → Keycloak lab overlays + Git settings
-#   configure-overlays.sh            # logging/S4; may call configure-keycloak-overlays.sh
+gitops/
+├── git-repository-secret.yaml       # applied by deploy-gitops*.yaml Phase 1b
+├── git-ca.crt                       # optional; via collect-git-ca.sh (not always committed)
+├── collect-git-ca.sh
+├── git-configure-lib.sh             # shared by configure-*.sh (SSH port prompt, Secret write)
+└── app-of-apps/keycloak-apps.yaml   # App-of-Apps root for this stack
 
 keycloak/
-├── help-delete.sh                   # Tear down Keycloak stack only
-├── argoCD/                          # AppProject + Applications (no Git Secret)
-├── deploy-keycloak.sh
+├── configure-overlays.sh            # compatibility wrapper → ../configure-keycloak-overlays.sh
+├── help-delete.sh                   # tear down Keycloak stack only
+├── deploy-keycloak.sh               # ordered oc apply -k (non-GitOps path)
+├── argoCD/                          # AppProject + Applications (no Git Secret here)
 ├── crunchy/
-│   ├── operator/overlays/lab/
-│   └── instance/overlays/lab/
-├── operator/overlays/lab/
-└── instance/overlays/lab/
+│   ├── operator/{base,overlays/lab}/
+│   └── instance/{base,overlays/lab}/
+├── operator/{base,overlays/lab}/
+└── instance/{base,overlays/lab}/    # Keycloak CR + TLS (generate-tls.sh)
 ```
 
-All application components run in namespace **`keycloak`**. The Crunchy operator itself runs in **`crunchy-operator`** (cluster-wide / AllNamespaces). Use `overlays/lab` for both initial deploy and later changes (edit patches / re-run `../configure-keycloak-overlays.sh`, then sync or `deploy-keycloak.sh`).
+Workloads run in namespace **`keycloak`**. The Crunchy operator runs in **`crunchy-operator`**. Use `overlays/lab` for initial deploy and day-2 changes.
+
+---
 
 ## Prerequisites
 
@@ -36,31 +58,35 @@ All application components run in namespace **`keycloak`**. The Crunchy operator
   - `redhat-operators` (RHBK operator)
 - A default StorageClass (Postgres PVCs do not set `storageClassName`)
 - `openssl` (only if regenerating TLS certs)
+- For GitOps: kubeconfig at `$HOME/ocpkubeconfig`
+
+---
 
 ## Lab customization (before deploy)
 
-Edit the Keycloak **HEADER** in [`../configure-keycloak-overlays.sh`](../configure-keycloak-overlays.sh), then run from the repo root:
+Edit the Keycloak **HEADER** in [`../configure-keycloak-overlays.sh`](../configure-keycloak-overlays.sh), then run from the **repo root**:
 
 ```bash
 ./configure-keycloak-overlays.sh
 ```
 
-The root [`../configure-overlays.sh`](../configure-overlays.sh) also calls this script when `KEYCLOAK_ENABLED=true`. Edit Keycloak-specific values in **`configure-keycloak-overlays.sh`**, not the logging/S4 script.
+[`../configure-overlays.sh`](../configure-overlays.sh) also runs this script when `KEYCLOAK_ENABLED=true`. Edit Keycloak values in **`configure-keycloak-overlays.sh`**, not the logging/S4 script.
 
-That rewrites `overlays/lab` (and regenerates TLS when `GENERATE_TLS=true`):
+`keycloak/configure-overlays.sh` is only a wrapper that execs the root script.
 
-| Parameter | Overlay file |
-|-----------|--------------|
+| Parameter | What it rewrites |
+|-----------|------------------|
+| `KEYCLOAK_OVERLAYS` | Which overlay name under `*/overlays/` (default `lab`) |
+| `KEYCLOAK_NAMESPACE` | Lab `kustomization.yaml` namespaces |
 | `RHBK_*` | `operator/overlays/lab/subscription-patch.yaml` |
-| `CRUNCHY_*` | `crunchy/operator/overlays/lab/subscription-patch.yaml` |
+| `CRUNCHY_*` / `CRUNCHY_OPERATOR_NAMESPACE` | `crunchy/operator/overlays/lab/subscription-patch.yaml` |
 | `POSTGRES_*` | `crunchy/instance/overlays/lab/postgrescluster-patch.yaml` |
-| `KEYCLOAK_HOSTNAME` / `KEYCLOAK_TLS_SECRET` | `instance/overlays/lab/keycloak-patch.yaml` |
-| `KEYCLOAK_NAMESPACE` | lab `kustomization.yaml` namespaces |
-| `GENERATE_TLS` | `instance/overlays/lab/tls.crt` + `tls.key` |
-| `GIT_REPO_URL` / `GIT_TARGET_REVISION` | `argoCD/*-app-argo.yaml`, `appkeycloak-project.yaml` |
-| `GIT_PROTOCOL` / `GIT_SSH_*` / `GIT_TLS_*` | `../gitops/git-repository-secret.yaml` (+ App-of-Apps URLs) |
+| `KEYCLOAK_HOSTNAME` / `KEYCLOAK_TLS_SECRET` | `instance/overlays/lab/keycloak-patch.yaml` (+ TLS secretGenerator name) |
+| `GENERATE_TLS` / `TLS_DAYS_VALID` | `instance/overlays/lab/tls.crt` + `tls.key` |
+| `GIT_PROTOCOL` / `GIT_REPO_URL` / `GIT_TARGET_REVISION` | Applications + AppProjects + App-of-Apps `repoURL`s |
+| `GIT_SSH_*` / `GIT_TLS_*` / `GIT_USERNAME` / `GIT_PASSWORD` | `gitops/git-repository-secret.yaml` |
 
-Or regenerate TLS alone:
+TLS only:
 
 ```bash
 ./keycloak/instance/overlays/lab/generate-tls.sh keycloak.apps.<cluster-domain>
@@ -68,19 +94,17 @@ Or regenerate TLS alone:
 
 ### Day-2 changes
 
-Edit HEADER / lab patches, run `./configure-keycloak-overlays.sh`, commit/push for Argo CD, or apply directly:
+Edit HEADER / lab patches, run `./configure-keycloak-overlays.sh`, commit/push for Argo CD, or apply with `./keycloak/deploy-keycloak.sh`.
 
-```bash
-./keycloak/deploy-keycloak.sh
-```
+---
 
 ## GitOps (preferred)
 
-Keycloak children live in the default **`openshift-gitops`** Argo CD instance, under AppProject **`appkeycloak`**.
+Keycloak children live in **`openshift-gitops`**, AppProject **`appkeycloak`**, under App-of-Apps root **`keycloak-apps`**.
 
 ### Git (HTTPS or SSH)
 
-Shared helpers: [`../gitops/git-configure-lib.sh`](../gitops/git-configure-lib.sh). Scripts rewrite Application `repoURL`s and always regenerate [`../gitops/git-repository-secret.yaml`](../gitops/git-repository-secret.yaml).
+Shared helpers: [`../gitops/git-configure-lib.sh`](../gitops/git-configure-lib.sh). Configure scripts rewrite Application `repoURL`s and always regenerate [`../gitops/git-repository-secret.yaml`](../gitops/git-repository-secret.yaml).
 
 **SSH with a custom port** (Argo CD needs `ssh://user@host:PORT/path.git`):
 
@@ -98,22 +122,40 @@ GIT_SSH_PRIVATE_KEY_FILE=$HOME/.ssh/id_ed25519
 ansible-playbook deploy-gitops-keycloak.yaml
 ```
 
-**HTTPS self-signed TLS** — if Argo CD fails with `x509: certificate signed by unknown authority`:
+### Self-signed Git TLS
+
+If Argo CD fails with `x509: certificate signed by unknown authority` on **HTTPS**:
 
 ```bash
 ./gitops/collect-git-ca.sh https://git.example.com/org/ocp-ansible-deployment.git
-# HEADER: GIT_PROTOCOL=https, GIT_TLS_INSECURE=false, GIT_CA_FILE=gitops/git-ca.crt
+./gitops/collect-git-ca.sh git.example.com:8443 -o gitops/git-ca.crt
+```
+
+| Mode | HEADER | Result |
+|------|--------|--------|
+| Lab (skip verify) | `GIT_PROTOCOL=https`, `GIT_TLS_INSECURE=true` | Secret has `insecure: "true"` |
+| Trust CA | `GIT_TLS_INSECURE=false`, `GIT_CA_FILE=gitops/git-ca.crt` | Playbook Phase 1b merges CA into `argocd-tls-certs-cm` (`git_apply_ca`) |
+
+`GIT_APPLY_CA_TO_CLUSTER` in the configure script defaults to `false`; prefer the playbook for CA apply.
+
+```bash
 ./configure-keycloak-overlays.sh
 ansible-playbook deploy-gitops-keycloak.yaml
 ```
 
-Ways to register Keycloak Applications:
+### Ways to register Applications
 
-1. **App-of-Apps full stack** — `deploy-gitops.yaml` (GitOps + `logging-apps` + `keycloak-apps`).
-2. **App-of-Apps Keycloak only** — `deploy-gitops-keycloak.yaml` (GitOps + `keycloak-apps`, no logging).
-3. **Manual** — `oc apply -f gitops/git-repository-secret.yaml`, then `keycloak-apps` or `oc apply -k keycloak/argoCD`.
+1. **Full stack App-of-Apps** — `ansible-playbook deploy-gitops.yaml` (`logging-apps` + `keycloak-apps`)
+2. **Keycloak only App-of-Apps** — `ansible-playbook deploy-gitops-keycloak.yaml`
+3. **Manual parents** — apply Secret + `cluster-config` + `keycloak-apps` (children come from Git)
 
-Child Applications (sync waves keep operator CRs after operators):
+```bash
+oc apply -f gitops/git-repository-secret.yaml
+oc apply -f gitops/app-of-apps/cluster-config-project.yaml
+oc apply -f gitops/app-of-apps/keycloak-apps.yaml
+```
+
+Child Applications (waves order operators before CRs). All use `SkipDryRunOnMissingResource`:
 
 | Application | Path | Sync wave |
 |-------------|------|-----------|
@@ -122,35 +164,72 @@ Child Applications (sync waves keep operator CRs after operators):
 | `keycloak-postgres` | `keycloak/crunchy/instance/overlays/lab` | 2 |
 | `keycloak` | `keycloak/instance/overlays/lab` | 3 |
 
-Instance apps use `SkipDryRunOnMissingResource` so they can retry until operator CRDs exist.
-
-```bash
-# Full stack via App-of-Apps
-ansible-playbook deploy-gitops.yaml
-
-# GitOps + Keycloak only (App-of-Apps)
-ansible-playbook deploy-gitops-keycloak.yaml
-```
-
-Or apply GitOps parents only:
-
-```bash
-oc apply -f gitops/git-repository-secret.yaml
-oc apply -f gitops/app-of-apps/cluster-config-project.yaml
-oc apply -f gitops/app-of-apps/keycloak-apps.yaml
-# Argo syncs keycloak-apps → keycloak/argoCD
-```
+---
 
 ## Manual deploy
 
-Apply from the **repo root** in this order. Operators must be ready (CRDs established) before their CRs, and Postgres must create the DB user Secret before Keycloak starts.
+Prefer `./keycloak/deploy-keycloak.sh` from the repo root (waits for CRDs and the Crunchy user Secret). Equivalent order:
+
+1. `oc apply -k keycloak/crunchy/operator/overlays/lab` → wait for `PostgresCluster` CRD  
+2. `oc apply -k keycloak/operator/overlays/lab` → wait for `Keycloak` CRD  
+3. `oc apply -k keycloak/crunchy/instance/overlays/lab` → wait for Secret `keycloak-postgres-pguser-keycloak`  
+4. `oc apply -k keycloak/instance/overlays/lab` (TLS via `secretGenerator` / `generate-tls.sh`)
+
+Do not apply the Keycloak CR before the Postgres user Secret exists (`CreateContainerConfigError`).
+
+---
+
+## What gets created
+
+| Resource | Namespace / notes |
+|----------|-------------------|
+| Namespace + Crunchy operator Subscription | `crunchy-operator` |
+| Namespace + RHBK operator + RoleBindings (`anyuid`, `view`) | `keycloak` |
+| `PostgresCluster` `keycloak-postgres` | `keycloak` |
+| Secrets `keycloak-postgres-pguser-keycloak`, `keycloak-tls-secret` | `keycloak` |
+| `Keycloak` CR + Route (hostname from HEADER) | `keycloak` |
+| Argo: AppProject `appkeycloak`, Applications above | `openshift-gitops` (GitOps path) |
+
+---
+
+## Verify
 
 ```bash
-./keycloak/deploy-keycloak.sh
+oc get applications -n openshift-gitops \
+  -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,SYNC:.status.sync.status,HEALTH:.status.health.status
+oc get pods -n keycloak
+oc get keycloak -n keycloak
+oc get postgrescluster -n keycloak
+oc get secret keycloak-postgres-pguser-keycloak keycloak-tls-secret -n keycloak
 ```
+
+---
 
 ## Tear down
 
+Keycloak stack only (does **not** remove logging or the GitOps operator):
+
 ```bash
 ./keycloak/help-delete.sh
+
+# Also remove shared Git Secret (only if logging does not need it):
+DELETE_GIT_SECRET=true ./keycloak/help-delete.sh
 ```
+
+Removes: `keycloak-apps` + children, Keycloak/Postgres CRs, namespaces `keycloak` / `crunchy-operator`, AppProject `appkeycloak`.
+
+Full logging + Keycloak teardown: `./help-delete.sh` from the repo root.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | What to do |
+|---------|--------------|------------|
+| `CreateContainerConfigError` / missing pguser Secret | Keycloak applied before Postgres ready | Wait for Secret; re-apply instance or sync wave 3 |
+| PVC Pending | No default StorageClass | Set a default SC or patch Postgres storage |
+| `CatalogSourcesUnhealthy` | Bad catalog/channel | Fix `RHBK_SOURCE` / `CRUNCHY_SOURCE` in HEADER |
+| TLS / hostname mismatch | Wrong SAN on cert | Re-run with correct `KEYCLOAK_HOSTNAME` + `GENERATE_TLS=true` |
+| Argo `x509` on HTTPS Git | Untrusted Git TLS | `collect-git-ca.sh` + `GIT_TLS_INSECURE=false` |
+| Argo SSH fails / wrong port | scp-style URL without port | Use `GIT_PROTOCOL=ssh`; let script build `ssh://host:PORT/...` |
+| Stale kubeconfig `401` | Expired token | `oc config view --raw > "$HOME/ocpkubeconfig"` |
