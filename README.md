@@ -316,6 +316,8 @@ Manual patch files (written by configure, or edit by hand):
 
 ### Use a different overlay name (logging / S4 / Keycloak)
 
+You do **not** need to create the overlay folder by hand. Set the new name in the configure script HEADER and run the script; if the directory is missing, it is created automatically (seeded from the default template: `rhlab` for logging, `lab` for S4 and Keycloak), then filled with your HEADER values and Argo paths updated where applicable.
+
 Set the directory name in the configure script HEADER (grouped near the top of [`configure-overlays.sh`](configure-overlays.sh)):
 
 | Variable | Script | Default | Writes |

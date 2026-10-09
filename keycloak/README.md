@@ -91,6 +91,8 @@ Edit the Keycloak **HEADER** in [`../configure-keycloak-overlays.sh`](../configu
 
 ### Use a different overlay name
 
+You do **not** need to create the overlay folder by hand. Set `KEYCLOAK_OVERLAYS` to the new name and run `./configure-keycloak-overlays.sh`; missing directories under `keycloak/*/overlays/<name>/` are created and written for you, and Argo Application paths are updated to match.
+
 Default overlay is `lab`. To use another name (for example `prod`):
 
 1. In [`../configure-keycloak-overlays.sh`](../configure-keycloak-overlays.sh) HEADER:
