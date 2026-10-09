@@ -3,14 +3,20 @@
 # Usage (from repo root):
 #   ./keycloak/deploy-keycloak.sh
 #   ./keycloak/deploy-keycloak.sh overlays/lab
+#   ./keycloak/deploy-keycloak.sh overlays/<name>
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OVERLAY="${1:-overlays/lab}"
 KC_NS="keycloak"
 
-if [[ "${OVERLAY}" != "overlays/lab" ]]; then
-  echo "ERROR: unsupported overlay '${OVERLAY}' (use overlays/lab)" >&2
+if [[ "${OVERLAY}" != overlays/* || "${OVERLAY}" == *".."* ]]; then
+  echo "ERROR: overlay must look like overlays/<name> (got '${OVERLAY}')" >&2
+  exit 1
+fi
+if [[ ! -d "${REPO_ROOT}/keycloak/instance/${OVERLAY}" ]]; then
+  echo "ERROR: missing Keycloak instance overlay: keycloak/instance/${OVERLAY}" >&2
+  echo "       Set KEYCLOAK_OVERLAYS and run ./configure-keycloak-overlays.sh first." >&2
   exit 1
 fi
 

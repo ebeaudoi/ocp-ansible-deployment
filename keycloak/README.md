@@ -7,6 +7,7 @@ Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize an
 - [Layout](#layout)
 - [Prerequisites](#prerequisites)
 - [Lab customization](#lab-customization-before-deploy)
+  - [Use a different overlay name](#use-a-different-overlay-name)
   - [Keycloak instance TLS](#keycloak-instance-tls)
 - [GitOps (preferred)](#gitops-preferred)
   - [Git (HTTPS or SSH)](#git-https-or-ssh)
@@ -47,7 +48,7 @@ keycloak/
 └── instance/{base,overlays/lab}/    # Keycloak CR + TLS (generate-tls.sh)
 ```
 
-Workloads run in namespace **`keycloak`**. The Crunchy operator runs in **`crunchy-operator`**. Use `overlays/lab` for initial deploy and day-2 changes.
+Workloads run in namespace **`keycloak`**. The Crunchy operator runs in **`crunchy-operator`**. Default overlay is `lab`; change with `KEYCLOAK_OVERLAYS` (see below).
 
 ---
 
@@ -77,16 +78,47 @@ Edit the Keycloak **HEADER** in [`../configure-keycloak-overlays.sh`](../configu
 
 | Parameter | What it rewrites |
 |-----------|------------------|
-| `KEYCLOAK_OVERLAYS` | Which overlay name under `*/overlays/` (default `lab`) |
-| `KEYCLOAK_NAMESPACE` | Lab `kustomization.yaml` namespaces |
-| `RHBK_*` | `operator/overlays/lab/subscription-patch.yaml` |
-| `CRUNCHY_*` / `CRUNCHY_OPERATOR_NAMESPACE` | `crunchy/operator/overlays/lab/subscription-patch.yaml` |
-| `POSTGRES_*` | `crunchy/instance/overlays/lab/postgrescluster-patch.yaml` |
-| `KEYCLOAK_HOSTNAME` / `KEYCLOAK_TLS_SECRET` | `instance/overlays/lab/keycloak-patch.yaml` (+ TLS secretGenerator name) |
-| `GENERATE_TLS` / `TLS_DAYS_VALID` | Self-signed `instance/overlays/lab/tls.crt` + `tls.key` |
+| `KEYCLOAK_OVERLAYS` | Overlay name under `keycloak/*/overlays/<name>/` (default `lab`); also Argo `source.path` |
+| `KEYCLOAK_NAMESPACE` | Overlay `kustomization.yaml` namespaces |
+| `RHBK_*` | `operator/overlays/<name>/subscription-patch.yaml` |
+| `CRUNCHY_*` / `CRUNCHY_OPERATOR_NAMESPACE` | `crunchy/operator/overlays/<name>/subscription-patch.yaml` |
+| `POSTGRES_*` | `crunchy/instance/overlays/<name>/postgrescluster-patch.yaml` |
+| `KEYCLOAK_HOSTNAME` / `KEYCLOAK_TLS_SECRET` | `instance/overlays/<name>/keycloak-patch.yaml` (+ TLS secretGenerator name) |
+| `GENERATE_TLS` / `TLS_DAYS_VALID` | Self-signed `instance/overlays/<name>/tls.crt` + `tls.key` |
 | `KEYCLOAK_TLS_CERT_FILE` / `KEYCLOAK_TLS_KEY_FILE` | Copy CA-signed PEMs into the overlay (skips self-signed) |
 | `GIT_PROTOCOL` / `GIT_REPO_URL` / `GIT_TARGET_REVISION` | Applications + AppProjects + App-of-Apps `repoURL`s |
 | `GIT_SSH_*` / `GIT_TLS_*` / `GIT_USERNAME` / `GIT_PASSWORD` | `gitops/git-repository-secret.yaml` |
+
+### Use a different overlay name
+
+Default overlay is `lab`. To use another name (for example `prod`):
+
+1. In [`../configure-keycloak-overlays.sh`](../configure-keycloak-overlays.sh) HEADER:
+   ```bash
+   KEYCLOAK_OVERLAYS=prod
+   ```
+   Prefer a **single** name for GitOps. If several names are listed, Argo Application paths use the **first**.
+2. Keep (or edit) the usual HEADER values (hostname, TLS, Postgres, subscriptions).
+3. Run from the repo root:
+   ```bash
+   ./configure-keycloak-overlays.sh
+   ```
+4. Commit/push for Argo CD, or apply directly:
+   ```bash
+   ./keycloak/deploy-keycloak.sh overlays/prod
+   ```
+
+What the script updates:
+
+| Component | Path |
+|-----------|------|
+| RHBK / Crunchy / Postgres / Keycloak overlays | `keycloak/.../overlays/<name>/` |
+| Argo `crunchy-operator` | `keycloak/crunchy/operator/overlays/<name>` |
+| Argo `rhbk-operator` | `keycloak/operator/overlays/<name>` |
+| Argo `keycloak-postgres` | `keycloak/crunchy/instance/overlays/<name>` |
+| Argo `keycloak` | `keycloak/instance/overlays/<name>` |
+
+Switch back with `KEYCLOAK_OVERLAYS=lab`, re-run configure, commit/push. Logging uses `LOKI_OVERLAY` in the root README ([Use a different overlay name](../README.md#use-a-different-overlay-name-logging--keycloak)).
 
 ### Keycloak instance TLS
 
@@ -198,21 +230,21 @@ Child Applications (waves order operators before CRs). All use `SkipDryRunOnMiss
 
 | Application | Path | Sync wave |
 |-------------|------|-----------|
-| `crunchy-operator` | `keycloak/crunchy/operator/overlays/lab` | 0 |
-| `rhbk-operator` | `keycloak/operator/overlays/lab` | 1 |
-| `keycloak-postgres` | `keycloak/crunchy/instance/overlays/lab` | 2 |
-| `keycloak` | `keycloak/instance/overlays/lab` | 3 |
+| `crunchy-operator` | `keycloak/crunchy/operator/overlays/<KEYCLOAK_OVERLAYS>` | 0 |
+| `rhbk-operator` | `keycloak/operator/overlays/<KEYCLOAK_OVERLAYS>` | 1 |
+| `keycloak-postgres` | `keycloak/crunchy/instance/overlays/<KEYCLOAK_OVERLAYS>` | 2 |
+| `keycloak` | `keycloak/instance/overlays/<KEYCLOAK_OVERLAYS>` | 3 |
 
 ---
 
 ## Manual deploy
 
-Prefer `./keycloak/deploy-keycloak.sh` from the repo root (waits for CRDs and the Crunchy user Secret). Equivalent order:
+Prefer `./keycloak/deploy-keycloak.sh` or `./keycloak/deploy-keycloak.sh overlays/<name>` from the repo root (waits for CRDs and the Crunchy user Secret). Equivalent order (`<name>` defaults to `lab`):
 
-1. `oc apply -k keycloak/crunchy/operator/overlays/lab` → wait for `PostgresCluster` CRD  
-2. `oc apply -k keycloak/operator/overlays/lab` → wait for `Keycloak` CRD  
-3. `oc apply -k keycloak/crunchy/instance/overlays/lab` → wait for Secret `keycloak-postgres-pguser-keycloak`  
-4. `oc apply -k keycloak/instance/overlays/lab` (TLS via `secretGenerator` from `tls.crt` / `tls.key`)
+1. `oc apply -k keycloak/crunchy/operator/overlays/<name>` → wait for `PostgresCluster` CRD  
+2. `oc apply -k keycloak/operator/overlays/<name>` → wait for `Keycloak` CRD  
+3. `oc apply -k keycloak/crunchy/instance/overlays/<name>` → wait for Secret `keycloak-postgres-pguser-keycloak`  
+4. `oc apply -k keycloak/instance/overlays/<name>` (TLS via `secretGenerator` from `tls.crt` / `tls.key`)
 
 Do not apply the Keycloak CR before the Postgres user Secret exists (`CreateContainerConfigError`).
 

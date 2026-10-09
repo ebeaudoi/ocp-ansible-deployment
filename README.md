@@ -30,6 +30,7 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
 - [Object storage (S4) for Loki](#object-storage-s4-for-loki)
   - [Layout](#layout)
   - [Configure lab overlays](#configure-lab-overlays)
+  - [Use a different overlay name (logging / Keycloak)](#use-a-different-overlay-name-logging--keycloak)
   - [Deploy S4 and create the `loggingstack` bucket](#deploy-s4-and-create-the-loggingstack-bucket)
   - [Encode Loki S3 Secret values](#encode-loki-s3-secret-values)
   - [Update Loki TLS CA bundle (HTTPS endpoints)](#update-loki-tls-ca-bundle-https-endpoints)
@@ -296,6 +297,7 @@ Set lab values in the script HEADER, then run the script (preferred), or edit th
 # 1. Edit HEADER in configure-overlays.sh (logging / S4 / Loki / GIT_*)
 #    and configure-keycloak-overlays.sh (Keycloak; inherits GIT_* when delegated)
 #    - S4_ENABLED / S4_DEPLOYED_ON_CLUSTER / KEYCLOAK_ENABLED
+#    - LOKI_OVERLAY (Loki instance overlay name; default rhlab)
 #    - S4_API_HOST, credentials, Loki bucket/endpoint/storageClass/placement
 #    - GIT_REPO_URL / GIT_TARGET_REVISION / GIT_TLS_* / GIT_PROTOCOL (SSH port prompted)
 # 2. Run (also calls configure-keycloak-overlays.sh when KEYCLOAK_ENABLED=true):
@@ -305,7 +307,62 @@ Set lab values in the script HEADER, then run the script (preferred), or edit th
 ./configure-keycloak-overlays.sh
 ```
 
-When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script refreshes `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
+When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script refreshes `logging/loki/instance/overlays/<LOKI_OVERLAY>/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
+
+### Use a different overlay name (logging / Keycloak)
+
+Both stacks pick the kustomize overlay from a HEADER variable. Configure rewrites the matching Argo CD Application `source.path` values, then you commit/push so Argo syncs.
+
+#### Logging (Loki instance)
+
+Default: `logging/loki/instance/overlays/rhlab`.
+
+1. In [`configure-overlays.sh`](configure-overlays.sh) HEADER:
+   ```bash
+   LOKI_OVERLAY=prod
+   ```
+2. Keep (or edit) Loki HEADER values (`LOKI_S3_*`, storage class, placement, etc.).
+3. Run `./configure-overlays.sh`
+4. Review diff, commit, push.
+
+| Action | Result |
+|--------|--------|
+| Writes patches | `logging/loki/instance/overlays/<LOKI_OVERLAY>/` |
+| Seeds if missing | Copies from `overlays/rhlab` on first use of a new name |
+| Updates Argo | [`logging/argoCD/loki-instance-app-argo.yaml`](logging/argoCD/loki-instance-app-argo.yaml) → `.../overlays/<LOKI_OVERLAY>` |
+
+Other logging Applications stay on `base`. S4 stays on `s4/overlays/lab`.
+
+#### Keycloak
+
+Default: `keycloak/*/overlays/lab`.
+
+1. In [`configure-keycloak-overlays.sh`](configure-keycloak-overlays.sh) HEADER:
+   ```bash
+   KEYCLOAK_OVERLAYS=prod
+   ```
+   (Use a single name for GitOps. If several names are listed, Argo paths use the **first**.)
+2. Keep (or edit) Keycloak HEADER values (hostname, TLS, Postgres, subscriptions, etc.).
+3. Run `./configure-keycloak-overlays.sh` (or `./configure-overlays.sh` with `KEYCLOAK_ENABLED=true`).
+4. Review diff, commit, push — or apply with `./keycloak/deploy-keycloak.sh overlays/prod`.
+
+| Action | Result |
+|--------|--------|
+| Writes overlays | `keycloak/{operator,crunchy/operator,crunchy/instance,instance}/overlays/<name>/` |
+| Updates Argo | All four apps under [`keycloak/argoCD/`](keycloak/argoCD/) → `.../overlays/<name>` |
+
+```bash
+# Logging example
+LOKI_OVERLAY=prod
+./configure-overlays.sh
+
+# Keycloak example
+KEYCLOAK_OVERLAYS=prod
+./configure-keycloak-overlays.sh
+# GitOps: commit/push  |  direct: ./keycloak/deploy-keycloak.sh overlays/prod
+```
+
+Switch back with `LOKI_OVERLAY=rhlab` / `KEYCLOAK_OVERLAYS=lab`, re-run configure, commit/push. Keycloak details: [`keycloak/README.md`](keycloak/README.md#use-a-different-overlay-name).
 
 Manual patch files:
 
@@ -313,9 +370,9 @@ Manual patch files:
 |------|-------------|
 | `s4/overlays/lab/s4-route-s3-patch.yaml` | `spec.host` for Route `s4-api` (S3 API hostname) |
 | `s4/overlays/lab/s4-secret-patch.yaml` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `UI_USERNAME`, `UI_PASSWORD` |
-| `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml` | Base64 S3 secret fields |
-| `logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml` | `storageClassName` / schema |
-| `logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml` | Infra `nodeSelector` and taint `tolerations` |
+| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-storage-patch.yaml` | Base64 S3 secret fields |
+| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-cr-patch.yaml` | `storageClassName` / schema |
+| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-placement-patch.yaml` | Infra `nodeSelector` and taint `tolerations` |
 
 ### Deploy S4 and create the `loggingstack` bucket
 
@@ -340,7 +397,7 @@ Loki’s S3 endpoint uses the **S3 Route** hostname (`s4-api` → `S4_API_HOST` 
 ### Encode Loki S3 Secret values
 
 - Base: `logging/loki/instance/base/logging-loki-s3.yaml`
-- Lab overlay: `logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml`
+- Overlay: `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-storage-patch.yaml`
 
 | Key | Example plaintext |
 |-----|-------------------|
@@ -360,7 +417,7 @@ printf '%s' '<base64-value>' | base64 -d; echo   # verify
 LokiStack uses ConfigMap `loki-s3-ca-bundle` key `service-ca.crt`.
 
 - Base: `logging/loki/instance/base/loki-s3-ca-bundle.yaml`
-- Lab patch: `logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml`
+- Overlay patch: `logging/loki/instance/overlays/<LOKI_OVERLAY>/loki-s3-ca-bundle-patch.yaml`
 
 Indent every PEM line under `service-ca.crt: |` (or YAML will treat `---` as a document break).
 
@@ -380,18 +437,18 @@ Also set Loki `storageClassName` to a StorageClass that exists on the cluster:
 oc get storageclass
 ```
 
-Example for this lab: `thin-csi` in `logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml`.
+Example for this lab: `thin-csi` in `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-cr-patch.yaml`.
 
 ---
 
 ## Loki node placement (taints)
 
-Argo CD syncs the **rhlab** overlay (`logging/loki/instance/overlays/rhlab/`), which overrides base placement.
+Argo CD syncs the Loki overlay selected by `LOKI_OVERLAY` (default `rhlab`: `logging/loki/instance/overlays/<LOKI_OVERLAY>/`), which overrides base placement.
 
 | Layer | Toleration (lab default) |
 |-------|--------------------------|
-| Base `03-loki-cr.yaml` | `workload=loki:NoSchedule` (overridden by rhlab) |
-| rhlab / `configure-overlays.sh` | `node-role.kubernetes.io/infra` with `Exists` (empty value) |
+| Base `03-loki-cr.yaml` | `workload=loki:NoSchedule` (overridden by the lab overlay) |
+| `LOKI_OVERLAY` / `configure-overlays.sh` | `node-role.kubernetes.io/infra` with `Exists` (empty value) |
 
 Lab defaults from `configure-overlays.sh`:
 
@@ -505,6 +562,6 @@ oc get pods -n keycloak
 | `pod has unbound immediate PersistentVolumeClaims` | Wrong/missing StorageClass | Set `storageClassName` to an existing SC (e.g. `thin-csi`) |
 | `CatalogSourcesUnhealthy` | Bad catalog name or unhealthy CS | `oc get catalogsource -n openshift-marketplace` and fix Subscription `source` |
 | `UIPlugin` CRD / resource not found | COO not ready or Argo RBAC | Wait for COO CSV/CRD; ensure UIPlugin create RBAC exists |
-| Loki pods Pending on scheduling | Nodes missing infra label/taint that matches the **rhlab** overlay | Label + taint with `node-role.kubernetes.io/infra` (see [Loki node placement](#loki-node-placement-taints)) |
+| Loki pods Pending on scheduling | Nodes missing infra label/taint that matches the Loki overlay | Label + taint with `node-role.kubernetes.io/infra` (see [Loki node placement](#loki-node-placement-taints)) |
 | Argo CD `x509: certificate signed by unknown authority` | Self-signed Git TLS | Collect CA with `./gitops/collect-git-ca.sh`, set `GIT_*`, re-run overlays, then `deploy-gitops.yaml` |
 | Stale kubeconfig / `401 Unauthorized` from API | Expired token in `$HOME/ocpkubeconfig` | Re-login with `oc` and rewrite `$HOME/ocpkubeconfig` |

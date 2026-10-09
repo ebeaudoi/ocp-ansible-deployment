@@ -9,17 +9,20 @@
 # Keycloak overlays are managed separately by configure-keycloak-overlays.sh
 # (invoked from here when KEYCLOAK_ENABLED=true).
 #
-# Logging / S4 patch inventory:
-#   1) logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml
+# Logging / S4 patch inventory (Loki overlay name from LOKI_OVERLAY, default rhlab):
+#   1) logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-storage-patch.yaml
 #      - access_key_id, access_key_secret, bucketnames, endpoint, forcepathstyle
-#   2) logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml
+#   2) logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-cr-patch.yaml
 #      - schema effectiveDate/version, S3 secret ref, tls.caName, storageClassName
-#   3) logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml
+#   3) logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-placement-patch.yaml
 #      - nodeSelector + tolerations for LokiStack components on infra nodes
-#   4) logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml
+#   4) logging/loki/instance/overlays/<LOKI_OVERLAY>/loki-s3-ca-bundle-patch.yaml
 #      - service-ca.crt (fetched when S4 is deployed on the cluster)
 #   5) s4/overlays/lab/s4-route-s3-patch.yaml  (spec.host; when S4_ENABLED=true)
 #   6) s4/overlays/lab/s4-secret-patch.yaml    (AWS_* + UI_*; when S4_ENABLED=true)
+#
+# Also rewrites logging/argoCD/loki-instance-app-argo.yaml source.path to match
+# logging/loki/instance/overlays/<LOKI_OVERLAY>.
 #
 # Also rewrites Argo CD Git URLs (GIT_REPO_URL / GIT_TARGET_REVISION):
 #   - logging/argoCD/*-app-argo.yaml
@@ -55,6 +58,11 @@ S4_DEPLOYED_ON_CLUSTER=true
 # (edit Keycloak HEADER values in that script, not here).
 KEYCLOAK_ENABLED=true
 
+# Loki instance kustomize overlay under logging/loki/instance/overlays/<name>.
+# Also rewrites Argo Application loki-instance source.path. New names are seeded
+# from overlays/rhlab on first run.
+LOKI_OVERLAY="rhlab"
+
 # --- S4 overlay parameters (s4/overlays/lab) ---
 # Used by: s4-route-s3-patch.yaml, s4-secret-patch.yaml
 # Also used as defaults for Loki S3 fields when S4_ENABLED=true.
@@ -65,7 +73,7 @@ S4_UI_USERNAME="admin"
 S4_UI_PASSWORD="changeme"
 
 # --- Loki S3 secret patch values
-# (logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml) ---
+# (logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-storage-patch.yaml) ---
 # Leave ACCESS_KEY / SECRET / ENDPOINT empty to inherit from S4_* when
 # S4_ENABLED=true. (not crypted values)
 LOKI_S3_ACCESS_KEY_ID="s4admin"
@@ -75,7 +83,7 @@ LOKI_S3_ENDPOINT="https://s3.s4.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"  
 LOKI_S3_FORCE_PATH_STYLE="true"
 
 # --- LokiStack CR patch values
-# (logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml) ---
+# (logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-cr-patch.yaml) ---
 LOKI_STORAGE_CLASS="thin-csi"
 LOKI_SCHEMA_EFFECTIVE_DATE="2026-06-15"
 LOKI_SCHEMA_VERSION="v13"
@@ -84,7 +92,7 @@ LOKI_S3_SECRET_TYPE="s3"
 LOKI_TLS_CA_NAME="loki-s3-ca-bundle"
 
 # --- LokiStack infra placement patch
-# (logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml) ---
+# (logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-placement-patch.yaml) ---
 # Applied to every LokiStack template component (compactor, distributor,
 # gateway, indexGateway, ingester, querier, queryFrontend, ruler).
 # LOKI_NODE_SELECTOR_VALUE and LOKI_TOLERATION_VALUE may be empty ("").
@@ -96,7 +104,7 @@ LOKI_TOLERATION_VALUE=""
 LOKI_TOLERATION_EFFECT="NoSchedule"
 
 # --- Loki TLS CA bundle patch
-# (logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml) ---
+# (logging/loki/instance/overlays/<LOKI_OVERLAY>/loki-s3-ca-bundle-patch.yaml) ---
 # Populated automatically when S4_ENABLED=true and S4_DEPLOYED_ON_CLUSTER=true.
 # No manual PEM value needed in the header.
 
@@ -130,13 +138,16 @@ GIT_PASSWORD="${GIT_PASSWORD:-}"
 
 S4_ROUTE_PATCH="${REPO_ROOT}/s4/overlays/lab/s4-route-s3-patch.yaml"
 S4_SECRET_PATCH="${REPO_ROOT}/s4/overlays/lab/s4-secret-patch.yaml"
-LOKI_STORAGE_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-storage-patch.yaml"
-LOKI_CR_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-cr-patch.yaml"
-LOKI_PLACEMENT_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/lokistack-placement-patch.yaml"
-LOKI_CA_PATCH="${REPO_ROOT}/logging/loki/instance/overlays/rhlab/loki-s3-ca-bundle-patch.yaml"
+LOKI_OVERLAY_DIR=""
+LOKI_STORAGE_PATCH=""
+LOKI_CR_PATCH=""
+LOKI_PLACEMENT_PATCH=""
+LOKI_CA_PATCH=""
+LOKI_INSTANCE_APP_ARGO="${LOGGING_ARGOCD_DIR}/loki-instance-app-argo.yaml"
 APPLOGGING_PROJECT="${LOGGING_ARGOCD_DIR}/applogging-project.yaml"
 CLUSTER_CONFIG_PROJECT="${APP_OF_APPS_DIR}/cluster-config-project.yaml"
 GIT_REPO_SECRET="${GITOPS_DIR}/git-repository-secret.yaml"
+LOKI_OVERLAY_TEMPLATE="rhlab"
 
 # Shared SSH/HTTPS Argo CD helpers (prompt SSH port, write Secret, normalize URL).
 # shellcheck source=gitops/git-configure-lib.sh
@@ -155,7 +166,34 @@ indent_pem() {
   sed 's/^/    /'
 }
 
+resolve_loki_overlay_paths() {
+  : "${LOKI_OVERLAY:?LOKI_OVERLAY is required}"
+  if [[ "${LOKI_OVERLAY}" == *"/"* || "${LOKI_OVERLAY}" == "."* || "${LOKI_OVERLAY}" == *".."* ]]; then
+    echo "ERROR: invalid LOKI_OVERLAY '${LOKI_OVERLAY}' (use a bare directory name, e.g. rhlab)" >&2
+    exit 1
+  fi
+
+  local template_dir="${REPO_ROOT}/logging/loki/instance/overlays/${LOKI_OVERLAY_TEMPLATE}"
+  LOKI_OVERLAY_DIR="${REPO_ROOT}/logging/loki/instance/overlays/${LOKI_OVERLAY}"
+
+  if [[ ! -d "${LOKI_OVERLAY_DIR}" ]]; then
+    if [[ ! -d "${template_dir}" ]]; then
+      echo "ERROR: Loki overlay template missing: ${template_dir}" >&2
+      exit 1
+    fi
+    echo "Seeding Loki overlay '${LOKI_OVERLAY}' from ${LOKI_OVERLAY_TEMPLATE}"
+    mkdir -p "${LOKI_OVERLAY_DIR}"
+    cp -a "${template_dir}/." "${LOKI_OVERLAY_DIR}/"
+  fi
+
+  LOKI_STORAGE_PATCH="${LOKI_OVERLAY_DIR}/lokistack-storage-patch.yaml"
+  LOKI_CR_PATCH="${LOKI_OVERLAY_DIR}/lokistack-cr-patch.yaml"
+  LOKI_PLACEMENT_PATCH="${LOKI_OVERLAY_DIR}/lokistack-placement-patch.yaml"
+  LOKI_CA_PATCH="${LOKI_OVERLAY_DIR}/loki-s3-ca-bundle-patch.yaml"
+}
+
 resolve_loki_s3_params() {
+  resolve_loki_overlay_paths
   if [[ "${S4_ENABLED}" == "true" ]]; then
     LOKI_S3_ACCESS_KEY_ID="${LOKI_S3_ACCESS_KEY_ID:-${S4_AWS_ACCESS_KEY_ID}}"
     LOKI_S3_ACCESS_KEY_SECRET="${LOKI_S3_ACCESS_KEY_SECRET:-${S4_AWS_SECRET_ACCESS_KEY}}"
@@ -229,6 +267,34 @@ print(f"Updated {path}")
 PY
 }
 
+update_source_path() {
+  local file="$1"
+  local source_path="$2"
+  if [[ ! -f "${file}" ]]; then
+    echo "WARNING: skip missing Argo CD file: ${file}" >&2
+    return 0
+  fi
+  python3 - "${file}" "${source_path}" <<'PY'
+import pathlib, sys
+path, source_path = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+out = []
+replaced = 0
+for line in text.splitlines(keepends=True):
+    stripped = line.lstrip()
+    indent = line[: len(line) - len(stripped)]
+    if stripped.startswith("path:"):
+        out.append(f"{indent}path: {source_path}\n")
+        replaced += 1
+    else:
+        out.append(line)
+if replaced == 0:
+    raise SystemExit(f"ERROR: could not find path: in {path}")
+path.write_text("".join(out))
+print(f"Updated {path} path -> {source_path}")
+PY
+}
+
 write_source_repos_project() {
   # Rewrite first sourceRepos entry (list item "- <url>") under spec.
   local file="$1"
@@ -259,9 +325,12 @@ configure_logging_argocd_git() {
   echo
   echo "=== Argo CD Git repository (logging + App-of-Apps + Secret) ==="
   resolve_git_repo_settings
+  # Ensure LOKI_OVERLAY paths exist even if configure_logging_overlays was skipped.
+  resolve_loki_overlay_paths
   echo "  GIT_PROTOCOL=${GIT_PROTOCOL}"
   echo "  GIT_REPO_URL=${GIT_REPO_URL}"
   echo "  GIT_TARGET_REVISION=${GIT_TARGET_REVISION}"
+  echo "  LOKI_OVERLAY=${LOKI_OVERLAY}"
   if [[ "${GIT_PROTOCOL}" == "ssh" ]]; then
     echo "  GIT_SSH_PORT=${GIT_SSH_PORT}"
     echo "  GIT_SSH_PRIVATE_KEY_FILE=${GIT_SSH_PRIVATE_KEY_FILE}"
@@ -276,7 +345,7 @@ configure_logging_argocd_git() {
   for app in \
     "${LOGGING_ARGOCD_DIR}/loggingoperator-app-argo.yaml" \
     "${LOGGING_ARGOCD_DIR}/lokioperator-app-argo.yaml" \
-    "${LOGGING_ARGOCD_DIR}/loki-instance-app-argo.yaml" \
+    "${LOKI_INSTANCE_APP_ARGO}" \
     "${LOGGING_ARGOCD_DIR}/coo-app-argo.yaml" \
     "${LOGGING_ARGOCD_DIR}/logginginstance-app-argo.yaml" \
     "${APP_OF_APPS_DIR}/logging-apps.yaml" \
@@ -284,6 +353,10 @@ configure_logging_argocd_git() {
   do
     update_repo_url_and_revision "${app}"
   done
+
+  update_source_path \
+    "${LOKI_INSTANCE_APP_ARGO}" \
+    "logging/loki/instance/overlays/${LOKI_OVERLAY}"
 
   write_source_repos_project "${APPLOGGING_PROJECT}" "applogging"
   write_source_repos_project "${CLUSTER_CONFIG_PROJECT}" "cluster-config"
@@ -488,6 +561,7 @@ configure_logging_overlays() {
   echo "=== Logging / S4 overlays ==="
   echo "  S4_ENABLED=${S4_ENABLED}"
   echo "  S4_DEPLOYED_ON_CLUSTER=${S4_DEPLOYED_ON_CLUSTER}"
+  echo "  LOKI_OVERLAY=${LOKI_OVERLAY}"
 
   if [[ "${S4_ENABLED}" == "true" && "${S4_DEPLOYED_ON_CLUSTER}" == "true" ]]; then
     maybe_resolve_s4_host_from_cluster
@@ -495,6 +569,7 @@ configure_logging_overlays() {
 
   resolve_loki_s3_params
 
+  echo "  LOKI_OVERLAY_DIR=${LOKI_OVERLAY_DIR}"
   echo "  LOKI_S3_ENDPOINT=${LOKI_S3_ENDPOINT}"
   echo "  LOKI_S3_BUCKET=${LOKI_S3_BUCKET}"
   echo "  LOKI_STORAGE_CLASS=${LOKI_STORAGE_CLASS}"
@@ -527,6 +602,7 @@ main() {
   echo "Configuring overlay patches from header parameters..."
   echo "  S4_ENABLED=${S4_ENABLED}"
   echo "  S4_DEPLOYED_ON_CLUSTER=${S4_DEPLOYED_ON_CLUSTER}"
+  echo "  LOKI_OVERLAY=${LOKI_OVERLAY}"
   echo "  KEYCLOAK_ENABLED=${KEYCLOAK_ENABLED}"
   echo "  GIT_PROTOCOL=${GIT_PROTOCOL}"
   echo "  GIT_REPO_URL=${GIT_REPO_URL}"

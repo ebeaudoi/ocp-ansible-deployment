@@ -34,7 +34,8 @@ GITOPS_DIR="${REPO_ROOT}/gitops"
 # HEADER — edit these values for your lab / cluster
 # =============================================================================
 
-# Overlay name under */overlays/ (single lab overlay for deploy and day-2 changes).
+# Overlay name under keycloak/*/overlays/<name>/. GitOps Argo Application paths use
+# the first name listed. Default lab; set e.g. prod for another environment.
 KEYCLOAK_OVERLAYS="lab"
 
 # Namespace used by Keycloak, PostgresCluster, and RHBK operator resources
@@ -124,6 +125,13 @@ source "${GITOPS_DIR}/git-configure-lib.sh"
 resolve_keycloak_params() {
   : "${KEYCLOAK_NAMESPACE:?KEYCLOAK_NAMESPACE is required}"
   : "${KEYCLOAK_OVERLAYS:?KEYCLOAK_OVERLAYS is required}"
+  local overlay
+  for overlay in ${KEYCLOAK_OVERLAYS}; do
+    if [[ "${overlay}" == *"/"* || "${overlay}" == "."* || "${overlay}" == *".."* ]]; then
+      echo "ERROR: invalid KEYCLOAK_OVERLAYS entry '${overlay}' (use a bare name, e.g. lab)" >&2
+      exit 1
+    fi
+  done
   : "${RHBK_CHANNEL:?RHBK_CHANNEL is required}"
   : "${RHBK_SOURCE:?RHBK_SOURCE is required}"
   : "${RHBK_SOURCE_NAMESPACE:?RHBK_SOURCE_NAMESPACE is required}"
@@ -524,6 +532,52 @@ print(f"Updated {path}")
 PY
 }
 
+update_source_path() {
+  local file="$1"
+  local source_path="$2"
+  if [[ ! -f "${file}" ]]; then
+    echo "WARNING: skip missing Argo CD file: ${file}" >&2
+    return 0
+  fi
+  python3 - "${file}" "${source_path}" <<'PY'
+import pathlib, sys
+path, source_path = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+out = []
+replaced = 0
+for line in text.splitlines(keepends=True):
+    stripped = line.lstrip()
+    indent = line[: len(line) - len(stripped)]
+    if stripped.startswith("path:"):
+        out.append(f"{indent}path: {source_path}\n")
+        replaced += 1
+    else:
+        out.append(line)
+if replaced == 0:
+    raise SystemExit(f"ERROR: could not find path: in {path}")
+path.write_text("".join(out))
+print(f"Updated {path} path -> {source_path}")
+PY
+}
+
+write_keycloak_argocd_overlay_paths() {
+  # GitOps syncs one overlay; use the first name in KEYCLOAK_OVERLAYS.
+  local overlay="${KEYCLOAK_OVERLAYS%% *}"
+  echo "  Argo Application overlay paths -> overlays/${overlay}"
+  update_source_path \
+    "${ARGOCD_DIR}/crunchy-operator-app-argo.yaml" \
+    "keycloak/crunchy/operator/overlays/${overlay}"
+  update_source_path \
+    "${ARGOCD_DIR}/rhbk-operator-app-argo.yaml" \
+    "keycloak/operator/overlays/${overlay}"
+  update_source_path \
+    "${ARGOCD_DIR}/crunchy-instance-app-argo.yaml" \
+    "keycloak/crunchy/instance/overlays/${overlay}"
+  update_source_path \
+    "${ARGOCD_DIR}/keycloak-instance-app-argo.yaml" \
+    "keycloak/instance/overlays/${overlay}"
+}
+
 write_source_repos_entry() {
   local file="$1"
   if [[ ! -f "${file}" ]]; then
@@ -653,6 +707,7 @@ configure_argocd_git() {
 
   write_git_repository_secret
   write_argocd_repo_urls
+  write_keycloak_argocd_overlay_paths
   write_appkeycloak_project
   write_source_repos_entry "${CLUSTER_CONFIG_PROJECT}"
   # HTTPS CA only; SSH uses sshPrivateKey + insecureIgnoreHostKey in the Secret.
@@ -697,7 +752,7 @@ main() {
   echo
   echo "Done. Review git diff, then deploy (Git Secret/CA applied after GitOps):"
   echo "  ansible-playbook deploy-gitops.yaml"
-  echo "  ./keycloak/deploy-keycloak.sh    # direct oc apply -k overlays/lab"
+  echo "  ./keycloak/deploy-keycloak.sh overlays/<name>   # direct oc apply -k"
 }
 
 main "$@"
