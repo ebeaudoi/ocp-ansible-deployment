@@ -11,7 +11,7 @@ spec:
     server: https://kubernetes.default.svc
   project: appkeycloak
   source:
-    path: keycloak/crunchy/instance/overlays/lab
+    path: keycloak/crunchy/instance/overlays/rdulab
     repoURL: https://github.com/ebeaudoi/ocp-ansible-deployment.git
     targetRevision: HEAD
   syncPolicy:

@@ -7,6 +7,9 @@
     repo_root: "{{ playbook_dir }}"
     s4_namespace: s4
     s4_bucket_name: loggingstack
+    # Match S4_OVERLAY in configure-overlays.sh (default lab). Override with -e s4_overlay=prod
+    # or env S4_OVERLAY.
+    s4_overlay: "{{ lookup('env', 'S4_OVERLAY') | default('lab', true) }}"
 
   tasks:
     - name: Ensure s4 namespace exists
@@ -17,13 +20,13 @@
         name: "{{ s4_namespace }}"
         state: present
 
-    - name: Render s4 lab overlay
+    - name: Render s4 overlay
       ansible.builtin.command:
-        cmd: oc kustomize "{{ repo_root }}/s4/overlays/lab"
+        cmd: oc kustomize "{{ repo_root }}/s4/overlays/{{ s4_overlay }}"
       register: s4_manifests
       changed_when: false
 
-    - name: Deploy s4 from lab overlay
+    - name: Deploy s4 from overlay
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig_path }}"
         namespace: "{{ s4_namespace }}"

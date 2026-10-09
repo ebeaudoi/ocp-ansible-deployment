@@ -29,7 +29,7 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
   - [5. Align operator Subscriptions with your cluster](#5-align-operator-subscriptions-with-your-cluster)
 - [Configure overlays](#configure-overlays)
   - [Run the configure scripts](#run-the-configure-scripts)
-  - [Use a different overlay name (logging / Keycloak)](#use-a-different-overlay-name-logging--keycloak)
+  - [Use a different overlay name (logging / S4 / Keycloak)](#use-a-different-overlay-name-logging--s4--keycloak)
 - [Object storage (S4) for Loki](#object-storage-s4-for-loki)
   - [Layout](#layout)
   - [Deploy S4 and create the `loggingstack` bucket](#deploy-s4-and-create-the-loggingstack-bucket)
@@ -55,7 +55,7 @@ deploy-gitops.yaml
         └── Application keycloak-apps → keycloak/argoCD (appkeycloak + children)
 
 deploy-s4.yaml
-  └── S4 (s4/overlays/lab) + loggingstack bucket
+  └── S4 (s4/overlays/<S4_OVERLAY>) + loggingstack bucket
 ```
 
 Everything runs in the default **`openshift-gitops`** Argo CD instance.
@@ -290,8 +290,8 @@ Set values in the script HEADER, then run the script (preferred), or edit the pa
 # 1. Edit HEADER in configure-overlays.sh (logging / S4 / Loki / GIT_*)
 #    and configure-keycloak-overlays.sh (Keycloak; inherits GIT_* when delegated)
 #    - S4_ENABLED / S4_DEPLOYED_ON_CLUSTER / KEYCLOAK_ENABLED
-#    - LOKI_OVERLAY (Loki instance overlay name; default rhlab)
-#    - KEYCLOAK_OVERLAYS (Keycloak overlay name; default lab) — in configure-keycloak-overlays.sh
+#    - LOGGING_OVERLAY / S4_OVERLAY (directory names under logging/.../overlays and s4/overlays)
+#    - KEYCLOAK_OVERLAYS (in configure-keycloak-overlays.sh; default lab)
 #    - S4_API_HOST, credentials, Loki bucket/endpoint/storageClass/placement
 #    - GIT_REPO_URL / GIT_TARGET_REVISION / GIT_TLS_* / GIT_PROTOCOL (SSH port prompted)
 # 2. Run (also calls configure-keycloak-overlays.sh when KEYCLOAK_ENABLED=true):
@@ -301,73 +301,66 @@ Set values in the script HEADER, then run the script (preferred), or edit the pa
 ./configure-keycloak-overlays.sh
 ```
 
-When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script refreshes `logging/loki/instance/overlays/<LOKI_OVERLAY>/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
+When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script refreshes `logging/loki/instance/overlays/<LOGGING_OVERLAY>/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
 
 Manual patch files (written by configure, or edit by hand):
 
 | File | What to set |
 |------|-------------|
-| `s4/overlays/lab/s4-route-s3-patch.yaml` | `spec.host` for Route `s4-api` (S3 API hostname) |
-| `s4/overlays/lab/s4-secret-patch.yaml` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `UI_USERNAME`, `UI_PASSWORD` |
-| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-storage-patch.yaml` | Base64 S3 secret fields |
-| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-cr-patch.yaml` | `storageClassName` / schema |
-| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-placement-patch.yaml` | Infra `nodeSelector` and taint `tolerations` |
+| `s4/overlays/<S4_OVERLAY>/s4-route-s3-patch.yaml` | `spec.host` for Route `s4-api` (S3 API hostname) |
+| `s4/overlays/<S4_OVERLAY>/s4-secret-patch.yaml` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `UI_USERNAME`, `UI_PASSWORD` |
+| `logging/loki/instance/overlays/<LOGGING_OVERLAY>/lokistack-storage-patch.yaml` | Base64 S3 secret fields |
+| `logging/loki/instance/overlays/<LOGGING_OVERLAY>/lokistack-cr-patch.yaml` | `storageClassName` / schema |
+| `logging/loki/instance/overlays/<LOGGING_OVERLAY>/lokistack-placement-patch.yaml` | Infra `nodeSelector` and taint `tolerations` |
 | `keycloak/*/overlays/<KEYCLOAK_OVERLAYS>/` | Subscriptions, Postgres, Keycloak CR, TLS (see [`keycloak/README.md`](keycloak/README.md)) |
 
-### Use a different overlay name (logging / Keycloak)
+### Use a different overlay name (logging / S4 / Keycloak)
 
-Both stacks pick the kustomize overlay from a HEADER variable. Configure rewrites the matching Argo CD Application `source.path` values, then you commit/push so Argo syncs.
+Set the directory name in the configure script HEADER (grouped near the top of [`configure-overlays.sh`](configure-overlays.sh)):
 
-#### Logging (Loki instance)
+| Variable | Script | Default | Writes |
+|----------|--------|---------|--------|
+| `LOGGING_OVERLAY` | `configure-overlays.sh` | `rhlab` | `logging/loki/instance/overlays/<name>/` + Argo `loki-instance` path |
+| `S4_OVERLAY` | `configure-overlays.sh` | `lab` | `s4/overlays/<name>/` (deploy via `deploy-s4.yaml`) |
+| `KEYCLOAK_OVERLAYS` | `configure-keycloak-overlays.sh` | `lab` | `keycloak/*/overlays/<name>/` + four Argo app paths |
 
-Default: `logging/loki/instance/overlays/rhlab`.
+Other logging Applications (`loggingoperator`, `lokioperator`, `coo`, `logginginstance`) stay on `base` — only the Loki **instance** uses an overlay.
 
-1. In [`configure-overlays.sh`](configure-overlays.sh) HEADER:
-   ```bash
-   LOKI_OVERLAY=prod
-   ```
-2. Keep (or edit) Loki HEADER values (`LOKI_S3_*`, storage class, placement, etc.).
-3. Run `./configure-overlays.sh`
-4. Review diff, commit, push.
+#### Logging
 
-| Action | Result |
-|--------|--------|
-| Writes patches | `logging/loki/instance/overlays/<LOKI_OVERLAY>/` |
-| Seeds if missing | Copies from `overlays/rhlab` on first use of a new name |
-| Updates Argo | [`logging/argoCD/loki-instance-app-argo.yaml`](logging/argoCD/loki-instance-app-argo.yaml) → `.../overlays/<LOKI_OVERLAY>` |
+```bash
+# HEADER in configure-overlays.sh
+LOGGING_OVERLAY=prod
+./configure-overlays.sh
+# → logging/loki/instance/overlays/prod/*
+# → Argo Application loki-instance path updated
+```
 
-Other logging Applications stay on `base`. S4 stays on `s4/overlays/lab`.
+New names are seeded from `overlays/rhlab`. Commit/push for Argo CD.
+
+#### S4
+
+```bash
+# HEADER in configure-overlays.sh
+S4_OVERLAY=prod
+./configure-overlays.sh
+# → s4/overlays/prod/*
+ansible-playbook deploy-s4.yaml -e s4_overlay=prod
+# or: S4_OVERLAY=prod ansible-playbook deploy-s4.yaml
+```
+
+New names are seeded from `s4/overlays/lab`. S4 is **not** an Argo Application.
 
 #### Keycloak
 
-Default: `keycloak/*/overlays/lab`.
-
-1. In [`configure-keycloak-overlays.sh`](configure-keycloak-overlays.sh) HEADER:
-   ```bash
-   KEYCLOAK_OVERLAYS=prod
-   ```
-   (Use a single name for GitOps. If several names are listed, Argo paths use the **first**.)
-2. Keep (or edit) Keycloak HEADER values (hostname, TLS, Postgres, subscriptions, etc.).
-3. Run `./configure-keycloak-overlays.sh` (or `./configure-overlays.sh` with `KEYCLOAK_ENABLED=true`).
-4. Review diff, commit, push — or apply with `./keycloak/deploy-keycloak.sh overlays/prod`.
-
-| Action | Result |
-|--------|--------|
-| Writes overlays | `keycloak/{operator,crunchy/operator,crunchy/instance,instance}/overlays/<name>/` |
-| Updates Argo | All four apps under [`keycloak/argoCD/`](keycloak/argoCD/) → `.../overlays/<name>` |
-
 ```bash
-# Logging example
-LOKI_OVERLAY=prod
-./configure-overlays.sh
-
-# Keycloak example
+# HEADER in configure-keycloak-overlays.sh
 KEYCLOAK_OVERLAYS=prod
 ./configure-keycloak-overlays.sh
 # GitOps: commit/push  |  direct: ./keycloak/deploy-keycloak.sh overlays/prod
 ```
 
-Switch back with `LOKI_OVERLAY=rhlab` / `KEYCLOAK_OVERLAYS=lab`, re-run configure, commit/push. Keycloak details: [`keycloak/README.md`](keycloak/README.md#use-a-different-overlay-name).
+Prefer a single name for GitOps (Argo uses the **first** if several are listed). Details: [`keycloak/README.md`](keycloak/README.md#use-a-different-overlay-name).
 
 ---
 
@@ -380,15 +373,15 @@ Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiser
 | Path | Purpose |
 |------|---------|
 | `s4/base/` | Base manifests (Deployment, Service, Routes, Secret, PVC, ConfigMap) |
-| `s4/overlays/lab/` | Lab patches for S3 route host and credentials |
-| `deploy-s4.yaml` | Deploy S4 and create the Loki bucket |
+| `s4/overlays/<S4_OVERLAY>/` | Env patches for S3 route host and credentials (default `lab`) |
+| `deploy-s4.yaml` | Deploy S4 and create the Loki bucket (`-e s4_overlay=...`) |
 
 ### Deploy S4 and create the `loggingstack` bucket
 
 `deploy-s4.yaml`:
 
 1. Creates namespace `s4`
-2. Renders `s4/overlays/lab` with `oc kustomize` and applies it
+2. Renders `s4/overlays/{{ s4_overlay }}` with `oc kustomize` and applies it
 3. Restarts the `s4` Deployment so pods pick up Secret changes
 4. Waits for rollout
 5. Reads UI credentials from Secret `s4-credentials`
@@ -406,7 +399,7 @@ Loki’s S3 endpoint uses the **S3 Route** hostname (`s4-api` → `S4_API_HOST` 
 ### Encode Loki S3 Secret values
 
 - Base: `logging/loki/instance/base/logging-loki-s3.yaml`
-- Overlay: `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-storage-patch.yaml`
+- Overlay: `logging/loki/instance/overlays/<LOGGING_OVERLAY>/lokistack-storage-patch.yaml`
 
 | Key | Example plaintext |
 |-----|-------------------|
@@ -426,7 +419,7 @@ printf '%s' '<base64-value>' | base64 -d; echo   # verify
 LokiStack uses ConfigMap `loki-s3-ca-bundle` key `service-ca.crt`.
 
 - Base: `logging/loki/instance/base/loki-s3-ca-bundle.yaml`
-- Overlay patch: `logging/loki/instance/overlays/<LOKI_OVERLAY>/loki-s3-ca-bundle-patch.yaml`
+- Overlay patch: `logging/loki/instance/overlays/<LOGGING_OVERLAY>/loki-s3-ca-bundle-patch.yaml`
 
 Indent every PEM line under `service-ca.crt: |` (or YAML will treat `---` as a document break).
 
@@ -446,18 +439,18 @@ Also set Loki `storageClassName` to a StorageClass that exists on the cluster:
 oc get storageclass
 ```
 
-Example for this lab: `thin-csi` in `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-cr-patch.yaml`.
+Example for this lab: `thin-csi` in `logging/loki/instance/overlays/<LOGGING_OVERLAY>/lokistack-cr-patch.yaml`.
 
 ---
 
 ## Loki node placement (taints)
 
-Argo CD syncs the Loki overlay selected by `LOKI_OVERLAY` (default `rhlab`: `logging/loki/instance/overlays/<LOKI_OVERLAY>/`), which overrides base placement.
+Argo CD syncs the Loki overlay selected by `LOGGING_OVERLAY` (default `rhlab`: `logging/loki/instance/overlays/<LOGGING_OVERLAY>/`), which overrides base placement.
 
 | Layer | Toleration (lab default) |
 |-------|--------------------------|
 | Base `03-loki-cr.yaml` | `workload=loki:NoSchedule` (overridden by the lab overlay) |
-| `LOKI_OVERLAY` / `configure-overlays.sh` | `node-role.kubernetes.io/infra` with `Exists` (empty value) |
+| `LOGGING_OVERLAY` / `configure-overlays.sh` | `node-role.kubernetes.io/infra` with `Exists` (empty value) |
 
 Lab defaults from `configure-overlays.sh`:
 

@@ -36,7 +36,7 @@ GITOPS_DIR="${REPO_ROOT}/gitops"
 
 # Overlay name under keycloak/*/overlays/<name>/. GitOps Argo Application paths use
 # the first name listed. Default lab; set e.g. prod for another environment.
-KEYCLOAK_OVERLAYS="lab"
+KEYCLOAK_OVERLAYS="rdulab"
 
 # Namespace used by Keycloak, PostgresCluster, and RHBK operator resources
 KEYCLOAK_NAMESPACE="keycloak"

@@ -118,7 +118,7 @@ What the script updates:
 | Argo `keycloak-postgres` | `keycloak/crunchy/instance/overlays/<name>` |
 | Argo `keycloak` | `keycloak/instance/overlays/<name>` |
 
-Switch back with `KEYCLOAK_OVERLAYS=lab`, re-run configure, commit/push. Logging uses `LOKI_OVERLAY` in the root README ([Use a different overlay name](../README.md#use-a-different-overlay-name-logging--keycloak)).
+Switch back with `KEYCLOAK_OVERLAYS=lab`, re-run configure, commit/push. Logging/S4 use `LOGGING_OVERLAY` / `S4_OVERLAY` in the root README ([Use a different overlay name](../README.md#use-a-different-overlay-name-logging--s4--keycloak)).
 
 ### Keycloak instance TLS
 
