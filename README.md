@@ -27,10 +27,11 @@ Ansible runs on the bastion and talks to the cluster with the `kubernetes.core` 
   - [3. Install the Python `kubernetes` client (pip)](#3-install-the-python-kubernetes-client-pip)
   - [4. Cluster kubeconfig and `oc`](#4-cluster-kubeconfig-and-oc)
   - [5. Align operator Subscriptions with your cluster](#5-align-operator-subscriptions-with-your-cluster)
+- [Configure overlays](#configure-overlays)
+  - [Run the configure scripts](#run-the-configure-scripts)
+  - [Use a different overlay name (logging / Keycloak)](#use-a-different-overlay-name-logging--keycloak)
 - [Object storage (S4) for Loki](#object-storage-s4-for-loki)
   - [Layout](#layout)
-  - [Configure lab overlays](#configure-lab-overlays)
-  - [Use a different overlay name (logging / Keycloak)](#use-a-different-overlay-name-logging--keycloak)
   - [Deploy S4 and create the `loggingstack` bucket](#deploy-s4-and-create-the-loggingstack-bucket)
   - [Encode Loki S3 Secret values](#encode-loki-s3-secret-values)
   - [Update Loki TLS CA bundle (HTTPS endpoints)](#update-loki-tls-ca-bundle-https-endpoints)
@@ -277,27 +278,20 @@ oc get catalogsource -n openshift-marketplace
 
 ---
 
-## Object storage (S4) for Loki
+## Configure overlays
 
-Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiservices-bu/s4), packaged in-repo under `s4/` with Kustomize.
+Lab and environment values for **logging (Loki)**, **S4**, **Git**, and **Keycloak** are set in script HEADERs, not under the S4 package alone. Run configure before commit/push and before `deploy-s4.yaml` / `deploy-gitops.yaml`.
 
-### Layout
+### Run the configure scripts
 
-| Path | Purpose |
-|------|---------|
-| `s4/base/` | Base manifests (Deployment, Service, Routes, Secret, PVC, ConfigMap) |
-| `s4/overlays/lab/` | Lab patches for S3 route host and credentials |
-| `deploy-s4.yaml` | Deploy S4 and create the Loki bucket |
-
-### Configure lab overlays
-
-Set lab values in the script HEADER, then run the script (preferred), or edit the patch files directly.
+Set values in the script HEADER, then run the script (preferred), or edit the patch files directly.
 
 ```bash
 # 1. Edit HEADER in configure-overlays.sh (logging / S4 / Loki / GIT_*)
 #    and configure-keycloak-overlays.sh (Keycloak; inherits GIT_* when delegated)
 #    - S4_ENABLED / S4_DEPLOYED_ON_CLUSTER / KEYCLOAK_ENABLED
 #    - LOKI_OVERLAY (Loki instance overlay name; default rhlab)
+#    - KEYCLOAK_OVERLAYS (Keycloak overlay name; default lab) — in configure-keycloak-overlays.sh
 #    - S4_API_HOST, credentials, Loki bucket/endpoint/storageClass/placement
 #    - GIT_REPO_URL / GIT_TARGET_REVISION / GIT_TLS_* / GIT_PROTOCOL (SSH port prompted)
 # 2. Run (also calls configure-keycloak-overlays.sh when KEYCLOAK_ENABLED=true):
@@ -308,6 +302,17 @@ Set lab values in the script HEADER, then run the script (preferred), or edit th
 ```
 
 When `S4_ENABLED=true` and `S4_DEPLOYED_ON_CLUSTER=true`, the script refreshes `logging/loki/instance/overlays/<LOKI_OVERLAY>/loki-s3-ca-bundle-patch.yaml` from the live S4 API route TLS chain.
+
+Manual patch files (written by configure, or edit by hand):
+
+| File | What to set |
+|------|-------------|
+| `s4/overlays/lab/s4-route-s3-patch.yaml` | `spec.host` for Route `s4-api` (S3 API hostname) |
+| `s4/overlays/lab/s4-secret-patch.yaml` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `UI_USERNAME`, `UI_PASSWORD` |
+| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-storage-patch.yaml` | Base64 S3 secret fields |
+| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-cr-patch.yaml` | `storageClassName` / schema |
+| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-placement-patch.yaml` | Infra `nodeSelector` and taint `tolerations` |
+| `keycloak/*/overlays/<KEYCLOAK_OVERLAYS>/` | Subscriptions, Postgres, Keycloak CR, TLS (see [`keycloak/README.md`](keycloak/README.md)) |
 
 ### Use a different overlay name (logging / Keycloak)
 
@@ -364,15 +369,19 @@ KEYCLOAK_OVERLAYS=prod
 
 Switch back with `LOKI_OVERLAY=rhlab` / `KEYCLOAK_OVERLAYS=lab`, re-run configure, commit/push. Keycloak details: [`keycloak/README.md`](keycloak/README.md#use-a-different-overlay-name).
 
-Manual patch files:
+---
 
-| File | What to set |
-|------|-------------|
-| `s4/overlays/lab/s4-route-s3-patch.yaml` | `spec.host` for Route `s4-api` (S3 API hostname) |
-| `s4/overlays/lab/s4-secret-patch.yaml` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `UI_USERNAME`, `UI_PASSWORD` |
-| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-storage-patch.yaml` | Base64 S3 secret fields |
-| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-cr-patch.yaml` | `storageClassName` / schema |
-| `logging/loki/instance/overlays/<LOKI_OVERLAY>/lokistack-placement-patch.yaml` | Infra `nodeSelector` and taint `tolerations` |
+## Object storage (S4) for Loki
+
+Loki needs S3-compatible storage. This lab uses [S4](https://github.com/rh-aiservices-bu/s4), packaged in-repo under `s4/` with Kustomize. Configure S4 hosts and credentials via [Configure overlays](#configure-overlays) (`S4_*` in `configure-overlays.sh`).
+
+### Layout
+
+| Path | Purpose |
+|------|---------|
+| `s4/base/` | Base manifests (Deployment, Service, Routes, Secret, PVC, ConfigMap) |
+| `s4/overlays/lab/` | Lab patches for S3 route host and credentials |
+| `deploy-s4.yaml` | Deploy S4 and create the Loki bucket |
 
 ### Deploy S4 and create the `loggingstack` bucket
 
