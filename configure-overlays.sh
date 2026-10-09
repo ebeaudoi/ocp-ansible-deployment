@@ -135,6 +135,7 @@ GIT_PASSWORD="${GIT_PASSWORD:-}"
 
 # =============================================================================
 # Paths (normally leave as-is)
+# Do not edit these paths manually; they are automatically populated by the script.
 # =============================================================================
 
 S4_OVERLAY_DIR=""
