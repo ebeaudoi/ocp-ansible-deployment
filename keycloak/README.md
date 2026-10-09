@@ -7,6 +7,7 @@ Deploy Red Hat build of Keycloak (RHBK) with Crunchy Postgres using Kustomize an
 - [Layout](#layout)
 - [Prerequisites](#prerequisites)
 - [Lab customization](#lab-customization-before-deploy)
+  - [Keycloak instance TLS](#keycloak-instance-tls)
 - [GitOps (preferred)](#gitops-preferred)
   - [Git (HTTPS or SSH)](#git-https-or-ssh)
   - [Self-signed Git TLS](#self-signed-git-tls)
@@ -82,14 +83,52 @@ Edit the Keycloak **HEADER** in [`../configure-keycloak-overlays.sh`](../configu
 | `CRUNCHY_*` / `CRUNCHY_OPERATOR_NAMESPACE` | `crunchy/operator/overlays/lab/subscription-patch.yaml` |
 | `POSTGRES_*` | `crunchy/instance/overlays/lab/postgrescluster-patch.yaml` |
 | `KEYCLOAK_HOSTNAME` / `KEYCLOAK_TLS_SECRET` | `instance/overlays/lab/keycloak-patch.yaml` (+ TLS secretGenerator name) |
-| `GENERATE_TLS` / `TLS_DAYS_VALID` | `instance/overlays/lab/tls.crt` + `tls.key` |
+| `GENERATE_TLS` / `TLS_DAYS_VALID` | Self-signed `instance/overlays/lab/tls.crt` + `tls.key` |
+| `KEYCLOAK_TLS_CERT_FILE` / `KEYCLOAK_TLS_KEY_FILE` | Copy CA-signed PEMs into the overlay (skips self-signed) |
 | `GIT_PROTOCOL` / `GIT_REPO_URL` / `GIT_TARGET_REVISION` | Applications + AppProjects + App-of-Apps `repoURL`s |
 | `GIT_SSH_*` / `GIT_TLS_*` / `GIT_USERNAME` / `GIT_PASSWORD` | `gitops/git-repository-secret.yaml` |
 
-TLS only:
+### Keycloak instance TLS
+
+Keycloak terminates HTTPS itself (`spec.http.tlsSecret`). The lab overlay `secretGenerator` builds Secret `keycloak-tls-secret` from `tls.crt` + `tls.key`. The OpenShift Route is passthrough — this is **not** the same as Argo Git TLS (`GIT_CA_FILE`).
+
+**Self-signed (lab default)**
 
 ```bash
+# HEADER
+GENERATE_TLS=true
+TLS_DAYS_VALID=365
+# KEYCLOAK_TLS_CERT_FILE / KEYCLOAK_TLS_KEY_FILE left empty
+
+./configure-keycloak-overlays.sh
+# or TLS only:
 ./keycloak/instance/overlays/lab/generate-tls.sh keycloak.apps.<cluster-domain>
+```
+
+**CA-signed (bring your own)**
+
+1. Obtain a private key PEM and a certificate PEM whose SAN/CN matches `KEYCLOAK_HOSTNAME`.
+2. Put the **full chain** in the cert file: leaf first, then intermediate(s). Omit the root if clients already trust it.
+3. In the HEADER of `configure-keycloak-overlays.sh`:
+
+```bash
+KEYCLOAK_HOSTNAME=keycloak.apps.<cluster-domain>
+KEYCLOAK_TLS_CERT_FILE=/path/to/fullchain.pem
+KEYCLOAK_TLS_KEY_FILE=/path/to/privkey.pem
+# GENERATE_TLS is ignored when both BYO paths are set
+```
+
+4. Run `./configure-keycloak-overlays.sh` — validates SAN/CN and key match, copies into `instance/overlays/lab/tls.crt` + `tls.key` (`chmod 600` on the key).
+5. Commit/push for Argo CD (prefer a private remote for `tls.key`), or apply with `./keycloak/deploy-keycloak.sh`.
+
+Manual place-and-skip (no BYO paths): set `GENERATE_TLS=false`, drop PEMs into the overlay yourself, then configure/deploy. `deploy-keycloak.sh` will **not** auto-generate when `GENERATE_TLS=false` or BYO env vars are set.
+
+Verify:
+
+```bash
+openssl x509 -in keycloak/instance/overlays/lab/tls.crt -noout -subject -ext subjectAltName
+oc get secret keycloak-tls-secret -n keycloak -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -subject -issuer
+curl -vI "https://${KEYCLOAK_HOSTNAME}/"
 ```
 
 ### Day-2 changes
@@ -173,7 +212,7 @@ Prefer `./keycloak/deploy-keycloak.sh` from the repo root (waits for CRDs and th
 1. `oc apply -k keycloak/crunchy/operator/overlays/lab` → wait for `PostgresCluster` CRD  
 2. `oc apply -k keycloak/operator/overlays/lab` → wait for `Keycloak` CRD  
 3. `oc apply -k keycloak/crunchy/instance/overlays/lab` → wait for Secret `keycloak-postgres-pguser-keycloak`  
-4. `oc apply -k keycloak/instance/overlays/lab` (TLS via `secretGenerator` / `generate-tls.sh`)
+4. `oc apply -k keycloak/instance/overlays/lab` (TLS via `secretGenerator` from `tls.crt` / `tls.key`)
 
 Do not apply the Keycloak CR before the Postgres user Secret exists (`CreateContainerConfigError`).
 
@@ -229,7 +268,9 @@ Full logging + Keycloak teardown: `./help-delete.sh` from the repo root.
 | `CreateContainerConfigError` / missing pguser Secret | Keycloak applied before Postgres ready | Wait for Secret; re-apply instance or sync wave 3 |
 | PVC Pending | No default StorageClass | Set a default SC or patch Postgres storage |
 | `CatalogSourcesUnhealthy` | Bad catalog/channel | Fix `RHBK_SOURCE` / `CRUNCHY_SOURCE` in HEADER |
-| TLS / hostname mismatch | Wrong SAN on cert | Re-run with correct `KEYCLOAK_HOSTNAME` + `GENERATE_TLS=true` |
+| TLS / hostname mismatch | Wrong SAN on cert | Fix `KEYCLOAK_HOSTNAME` to match SAN; re-run configure (`GENERATE_TLS=true` or BYO paths) |
+| Browser untrusted Keycloak TLS | Missing intermediate in `tls.crt` | Rebuild full chain (leaf + intermediates) and re-sync |
+| `deploy-keycloak.sh` refuses missing TLS | BYO / `GENERATE_TLS=false` without PEMs | Set BYO HEADER paths or place `tls.crt`/`tls.key`, or use `GENERATE_TLS=true` |
 | Argo `x509` on HTTPS Git | Untrusted Git TLS | `collect-git-ca.sh` + `GIT_TLS_INSECURE=false` |
 | Argo SSH fails / wrong port | scp-style URL without port | Use `GIT_PROTOCOL=ssh`; let script build `ssh://host:PORT/...` |
 | Stale kubeconfig `401` | Expired token | `oc config view --raw > "$HOME/ocpkubeconfig"` |

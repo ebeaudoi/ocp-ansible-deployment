@@ -62,7 +62,26 @@ for i in $(seq 1 60); do
 done
 
 echo "==> 4/4 Keycloak instance (+ TLS secret from secretGenerator)"
-if [[ ! -f "${REPO_ROOT}/keycloak/instance/${OVERLAY}/tls.crt" || ! -f "${REPO_ROOT}/keycloak/instance/${OVERLAY}/tls.key" ]]; then
+TLS_CRT="${REPO_ROOT}/keycloak/instance/${OVERLAY}/tls.crt"
+TLS_KEY="${REPO_ROOT}/keycloak/instance/${OVERLAY}/tls.key"
+BYO_CERT="${KEYCLOAK_TLS_CERT_FILE:-}"
+BYO_KEY="${KEYCLOAK_TLS_KEY_FILE:-}"
+GENERATE_TLS="${GENERATE_TLS:-true}"
+
+if [[ ! -f "${TLS_CRT}" || ! -f "${TLS_KEY}" ]]; then
+  if [[ -n "${BYO_CERT}" || -n "${BYO_KEY}" ]]; then
+    echo "ERROR: TLS PEMs missing under ${OVERLAY} but BYO cert mode is set." >&2
+    echo "       Run ./configure-keycloak-overlays.sh with KEYCLOAK_TLS_CERT_FILE / KEYCLOAK_TLS_KEY_FILE," >&2
+    echo "       or copy signed tls.crt + tls.key into keycloak/instance/${OVERLAY}/" >&2
+    exit 1
+  fi
+  if [[ "${GENERATE_TLS}" == "false" ]]; then
+    echo "ERROR: TLS PEMs missing and GENERATE_TLS=false (will not auto-generate)." >&2
+    echo "       Place signed tls.crt + tls.key in keycloak/instance/${OVERLAY}/," >&2
+    echo "       or set KEYCLOAK_TLS_CERT_FILE / KEYCLOAK_TLS_KEY_FILE and run configure," >&2
+    echo "       or re-run with GENERATE_TLS=true for a self-signed lab cert." >&2
+    exit 1
+  fi
   echo "TLS files missing; generating with generate-tls.sh"
   "${REPO_ROOT}/keycloak/instance/${OVERLAY}/generate-tls.sh"
 fi

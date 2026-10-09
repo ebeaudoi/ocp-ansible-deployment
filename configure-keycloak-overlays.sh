@@ -63,7 +63,12 @@ POSTGRES_BACKUP_STORAGE="10Gi"
 KEYCLOAK_HOSTNAME="keycloak.apps.ebdn-rd3.ebeaudoi.tamlab.rdu2.redhat.com"
 KEYCLOAK_TLS_SECRET="keycloak-tls-secret"
 
-# Regenerate instance/overlays/<name>/tls.crt and tls.key for KEYCLOAK_HOSTNAME
+# Instance TLS (secretGenerator → keycloak-tls-secret; Route is passthrough).
+# Self-signed: GENERATE_TLS=true (default for labs).
+# CA-signed (BYO): set both paths below (leaf + intermediates in the cert PEM).
+# When BYO paths are set, self-signed generation is skipped regardless of GENERATE_TLS.
+KEYCLOAK_TLS_CERT_FILE=""
+KEYCLOAK_TLS_KEY_FILE=""
 GENERATE_TLS="true"
 TLS_DAYS_VALID="365"
 
@@ -101,6 +106,8 @@ CRUNCHY_OPERATOR_KUSTOMIZATION=""
 CRUNCHY_INSTANCE_KUSTOMIZATION=""
 KEYCLOAK_INSTANCE_KUSTOMIZATION=""
 GENERATE_TLS_SCRIPT=""
+KEYCLOAK_TLS_CRT=""
+KEYCLOAK_TLS_KEY=""
 GIT_REPO_SECRET="${GITOPS_DIR}/git-repository-secret.yaml"
 APPKEYCLOAK_PROJECT="${ARGOCD_DIR}/appkeycloak-project.yaml"
 APP_OF_APPS_DIR="${GITOPS_DIR}/app-of-apps"
@@ -134,12 +141,34 @@ resolve_keycloak_params() {
   : "${GENERATE_TLS:?GENERATE_TLS is required}"
   : "${TLS_DAYS_VALID:?TLS_DAYS_VALID is required}"
   normalize_keycloak_hostname
+  resolve_byo_tls_paths
   resolve_git_repo_settings
   if [[ -z "${GIT_TLS_HOST}" ]]; then
     GIT_TLS_HOST="$(git_host_from_url "${GIT_REPO_URL}")"
   fi
   if [[ "${GIT_PROTOCOL}" == "https" && "${GIT_TLS_INSECURE}" != "true" && -n "${GIT_CA_FILE}" && ! -f "${GIT_CA_FILE}" ]]; then
     echo "ERROR: GIT_CA_FILE not found: ${GIT_CA_FILE}" >&2
+    exit 1
+  fi
+}
+
+resolve_byo_tls_paths() {
+  KEYCLOAK_TLS_CERT_FILE="${KEYCLOAK_TLS_CERT_FILE:-}"
+  KEYCLOAK_TLS_KEY_FILE="${KEYCLOAK_TLS_KEY_FILE:-}"
+  if [[ -n "${KEYCLOAK_TLS_CERT_FILE}" && -z "${KEYCLOAK_TLS_KEY_FILE}" ]] || \
+     [[ -z "${KEYCLOAK_TLS_CERT_FILE}" && -n "${KEYCLOAK_TLS_KEY_FILE}" ]]; then
+    echo "ERROR: set both KEYCLOAK_TLS_CERT_FILE and KEYCLOAK_TLS_KEY_FILE for signed TLS" >&2
+    exit 1
+  fi
+  if [[ -z "${KEYCLOAK_TLS_CERT_FILE}" ]]; then
+    return 0
+  fi
+  if [[ ! -f "${KEYCLOAK_TLS_CERT_FILE}" ]]; then
+    echo "ERROR: KEYCLOAK_TLS_CERT_FILE not found: ${KEYCLOAK_TLS_CERT_FILE}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${KEYCLOAK_TLS_KEY_FILE}" ]]; then
+    echo "ERROR: KEYCLOAK_TLS_KEY_FILE not found: ${KEYCLOAK_TLS_KEY_FILE}" >&2
     exit 1
   fi
 }
@@ -174,6 +203,8 @@ set_keycloak_overlay_paths() {
   CRUNCHY_INSTANCE_KUSTOMIZATION="${KEYCLOAK_ROOT}/crunchy/instance/overlays/${overlay}/kustomization.yaml"
   KEYCLOAK_INSTANCE_KUSTOMIZATION="${KEYCLOAK_ROOT}/instance/overlays/${overlay}/kustomization.yaml"
   GENERATE_TLS_SCRIPT="${KEYCLOAK_ROOT}/instance/overlays/${overlay}/generate-tls.sh"
+  KEYCLOAK_TLS_CRT="${KEYCLOAK_ROOT}/instance/overlays/${overlay}/tls.crt"
+  KEYCLOAK_TLS_KEY="${KEYCLOAK_ROOT}/instance/overlays/${overlay}/tls.key"
 }
 
 ensure_keycloak_overlay_dirs() {
@@ -388,6 +419,53 @@ generate_keycloak_tls() {
   DAYS_VALID="${TLS_DAYS_VALID}" "${GENERATE_TLS_SCRIPT}" "${KEYCLOAK_HOSTNAME}"
 }
 
+validate_byo_tls_material() {
+  local cert="$1"
+  local key="$2"
+  local hostname="$3"
+  local cert_pub key_pub san_text subject_text
+
+  if ! openssl x509 -in "${cert}" -noout >/dev/null 2>&1; then
+    echo "ERROR: KEYCLOAK_TLS_CERT_FILE is not a valid X.509 PEM: ${cert}" >&2
+    exit 1
+  fi
+  if ! openssl pkey -in "${key}" -noout >/dev/null 2>&1; then
+    echo "ERROR: KEYCLOAK_TLS_KEY_FILE is not a valid private key PEM: ${key}" >&2
+    exit 1
+  fi
+
+  cert_pub="$(openssl x509 -in "${cert}" -noout -pubkey 2>/dev/null | openssl md5)"
+  key_pub="$(openssl pkey -in "${key}" -pubout 2>/dev/null | openssl md5)"
+  if [[ -z "${cert_pub}" || -z "${key_pub}" || "${cert_pub}" != "${key_pub}" ]]; then
+    echo "ERROR: certificate and private key do not match" >&2
+    exit 1
+  fi
+
+  san_text="$(openssl x509 -in "${cert}" -noout -ext subjectAltName 2>/dev/null || true)"
+  subject_text="$(openssl x509 -in "${cert}" -noout -subject 2>/dev/null || true)"
+  if ! printf '%s\n%s\n' "${san_text}" "${subject_text}" | grep -Fqi "${hostname}"; then
+    echo "ERROR: KEYCLOAK_HOSTNAME '${hostname}' not found in certificate SAN/CN" >&2
+    echo "       subject: ${subject_text}" >&2
+    echo "       SAN: ${san_text:-<none>}" >&2
+    exit 1
+  fi
+}
+
+install_byo_keycloak_tls() {
+  local overlay="$1"
+  local dest_crt="${KEYCLOAK_TLS_CRT}"
+  local dest_key="${KEYCLOAK_TLS_KEY}"
+
+  validate_byo_tls_material "${KEYCLOAK_TLS_CERT_FILE}" "${KEYCLOAK_TLS_KEY_FILE}" "${KEYCLOAK_HOSTNAME}"
+  mkdir -p "$(dirname "${dest_crt}")"
+  cp "${KEYCLOAK_TLS_CERT_FILE}" "${dest_crt}"
+  cp "${KEYCLOAK_TLS_KEY_FILE}" "${dest_key}"
+  chmod 600 "${dest_key}"
+  echo "Installed signed TLS for ${overlay}:"
+  echo "  ${dest_crt}  (from ${KEYCLOAK_TLS_CERT_FILE})"
+  echo "  ${dest_key}  (from ${KEYCLOAK_TLS_KEY_FILE})"
+}
+
 configure_keycloak_overlay() {
   local overlay="$1"
   echo
@@ -404,10 +482,16 @@ configure_keycloak_overlay() {
   write_crunchy_instance_kustomization
   write_keycloak_instance_kustomization
 
-  if [[ "${GENERATE_TLS}" == "true" ]]; then
+  if [[ -n "${KEYCLOAK_TLS_CERT_FILE}" ]]; then
+    install_byo_keycloak_tls "${overlay}"
+  elif [[ "${GENERATE_TLS}" == "true" ]]; then
     generate_keycloak_tls
   else
     echo "Skipping TLS generation for ${overlay} (GENERATE_TLS=false)"
+    if [[ ! -f "${KEYCLOAK_TLS_CRT}" || ! -f "${KEYCLOAK_TLS_KEY}" ]]; then
+      echo "WARNING: ${KEYCLOAK_TLS_CRT} / ${KEYCLOAK_TLS_KEY} missing;" >&2
+      echo "         place signed PEMs there or set KEYCLOAK_TLS_CERT_FILE / KEYCLOAK_TLS_KEY_FILE" >&2
+    fi
   fi
 }
 
@@ -595,7 +679,13 @@ main() {
   echo "  RHBK_CHANNEL=${RHBK_CHANNEL} / ${RHBK_SOURCE}"
   echo "  CRUNCHY_CHANNEL=${CRUNCHY_CHANNEL} / ${CRUNCHY_SOURCE}"
   echo "  POSTGRES storage instance=${POSTGRES_INSTANCE_STORAGE} backup=${POSTGRES_BACKUP_STORAGE}"
-  echo "  GENERATE_TLS=${GENERATE_TLS}"
+  if [[ -n "${KEYCLOAK_TLS_CERT_FILE}" ]]; then
+    echo "  KEYCLOAK_TLS_CERT_FILE=${KEYCLOAK_TLS_CERT_FILE}"
+    echo "  KEYCLOAK_TLS_KEY_FILE=${KEYCLOAK_TLS_KEY_FILE}"
+    echo "  GENERATE_TLS=ignored (BYO signed cert)"
+  else
+    echo "  GENERATE_TLS=${GENERATE_TLS}"
+  fi
 
   local overlay
   for overlay in ${KEYCLOAK_OVERLAYS}; do
